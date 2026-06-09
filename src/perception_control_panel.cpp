@@ -1,4 +1,4 @@
-#include "concrete_block_perception_rviz_plugins/perception_control_panel.hpp"
+#include "concrete_block_rviz_plugins/perception_control_panel.hpp"
 
 #include <chrono>
 
@@ -14,7 +14,7 @@
 #include "rviz_common/display_context.hpp"
 #include "rviz_common/ros_integration/ros_node_abstraction_iface.hpp"
 
-namespace concrete_block_perception_rviz_plugins
+namespace concrete_block_rviz_plugins
 {
 
 PerceptionControlPanel::PerceptionControlPanel(QWidget * parent)
@@ -267,8 +267,8 @@ void PerceptionControlPanel::setStatus(const QString & text, bool error)
   status_label_->setStyleSheet(error ? "QLabel { color: #b00020; }" : "");
 }
 
-}  // namespace concrete_block_perception_rviz_plugins
+}  // namespace concrete_block_rviz_plugins
 
 PLUGINLIB_EXPORT_CLASS(
-  concrete_block_perception_rviz_plugins::PerceptionControlPanel,
+  concrete_block_rviz_plugins::PerceptionControlPanel,
   rviz_common::Panel)

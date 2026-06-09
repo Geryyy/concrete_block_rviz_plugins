@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(concrete_block_perception_rviz_plugins)
+project(concrete_block_rviz_plugins)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -19,7 +19,7 @@ find_package(Qt5 REQUIRED COMPONENTS Core Gui Widgets)
 add_definitions(-DQT_NO_KEYWORDS)
 
 set(${PROJECT_NAME}_HDRS
-  include/concrete_block_perception_rviz_plugins/perception_control_panel.hpp
+  include/concrete_block_rviz_plugins/perception_control_panel.hpp
 )
 
 set(${PROJECT_NAME}_SRCS

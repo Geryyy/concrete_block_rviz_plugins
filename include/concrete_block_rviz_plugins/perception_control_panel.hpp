@@ -14,7 +14,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "rviz_common/panel.hpp"
 
-namespace concrete_block_perception_rviz_plugins
+namespace concrete_block_rviz_plugins
 {
 
 class PerceptionControlPanel : public rviz_common::Panel
@@ -59,4 +59,4 @@ private:
   bool busy_{false};
 };
 
-}  // namespace concrete_block_perception_rviz_plugins
+}  // namespace concrete_block_rviz_plugins

@@ -1,7 +1,7 @@
-<library path="concrete_block_perception_rviz_plugins">
+<library path="concrete_block_rviz_plugins">
   <class
-    name="concrete_block_perception_rviz_plugins/PerceptionControlPanel"
-    type="concrete_block_perception_rviz_plugins::PerceptionControlPanel"
+    name="concrete_block_rviz_plugins/PerceptionControlPanel"
+    type="concrete_block_rviz_plugins::PerceptionControlPanel"
     base_class_type="rviz_common::Panel">
     <description>Buttons for running concrete block perception test modes.</description>
   </class>

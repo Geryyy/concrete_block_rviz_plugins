@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>concrete_block_perception_rviz_plugins</name>
+  <name>concrete_block_rviz_plugins</name>
   <version>0.1.0</version>
   <description>RViz controls for the concrete block perception test pipeline.</description>
   <maintainer email="gerald.ebmer.fl@ait.ac.at">vscode</maintainer>
