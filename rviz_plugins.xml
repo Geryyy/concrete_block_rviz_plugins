@@ -5,4 +5,10 @@
     base_class_type="rviz_common::Panel">
     <description>Buttons for running concrete block perception test modes.</description>
   </class>
+  <class
+    name="concrete_block_rviz_plugins/WallAssemblyPanel"
+    type="concrete_block_rviz_plugins::WallAssemblyPanel"
+    base_class_type="rviz_common::Panel">
+    <description>Select the wall plan and confirm/freeze the interactively placed origin.</description>
+  </class>
 </library>
