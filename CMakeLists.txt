@@ -10,7 +10,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
 find_package(ament_cmake REQUIRED)
-find_package(concrete_block_assembly_interfaces REQUIRED)
 find_package(concrete_block_world_model_interfaces REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -21,12 +20,17 @@ add_definitions(-DQT_NO_KEYWORDS)
 
 set(${PROJECT_NAME}_HDRS
   include/concrete_block_rviz_plugins/perception_control_panel.hpp
-  include/concrete_block_rviz_plugins/wall_assembly_panel.hpp
 )
 
 set(${PROJECT_NAME}_SRCS
   src/perception_control_panel.cpp
-  src/wall_assembly_panel.cpp
+)
+
+set(${PROJECT_NAME}_DEPS
+  concrete_block_world_model_interfaces
+  pluginlib
+  rclcpp
+  rviz_common
 )
 
 qt5_wrap_cpp(${PROJECT_NAME}_MOCS ${${PROJECT_NAME}_HDRS})
@@ -43,11 +47,7 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 )
 
 ament_target_dependencies(${PROJECT_NAME}
-  concrete_block_assembly_interfaces
-  concrete_block_world_model_interfaces
-  pluginlib
-  rclcpp
-  rviz_common
+  ${${PROJECT_NAME}_DEPS}
 )
 
 target_link_libraries(${PROJECT_NAME}
@@ -81,11 +81,7 @@ pluginlib_export_plugin_description_file(rviz_common rviz_plugins.xml)
 ament_export_targets(export_${PROJECT_NAME})
 ament_export_libraries(${PROJECT_NAME})
 ament_export_dependencies(
-  concrete_block_assembly_interfaces
-  concrete_block_world_model_interfaces
-  pluginlib
-  rclcpp
-  rviz_common
+  ${${PROJECT_NAME}_DEPS}
 )
 
 ament_package()
