@@ -5,4 +5,10 @@
     base_class_type="rviz_common::Panel">
     <description>Buttons for running concrete block perception test modes.</description>
   </class>
+  <class
+    name="concrete_block_rviz_plugins/PlanControlPanel"
+    type="concrete_block_rviz_plugins::PlanControlPanel"
+    base_class_type="rviz_common::Panel">
+    <description>List, load and clear wall-assembly plans in the world model.</description>
+  </class>
 </library>

@@ -10,6 +10,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
 find_package(ament_cmake REQUIRED)
+find_package(concrete_block_assembly_interfaces REQUIRED)
 find_package(concrete_block_world_model_interfaces REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -20,13 +21,16 @@ add_definitions(-DQT_NO_KEYWORDS)
 
 set(${PROJECT_NAME}_HDRS
   include/concrete_block_rviz_plugins/perception_control_panel.hpp
+  include/concrete_block_rviz_plugins/plan_control_panel.hpp
 )
 
 set(${PROJECT_NAME}_SRCS
   src/perception_control_panel.cpp
+  src/plan_control_panel.cpp
 )
 
 set(${PROJECT_NAME}_DEPS
+  concrete_block_assembly_interfaces
   concrete_block_world_model_interfaces
   pluginlib
   rclcpp
