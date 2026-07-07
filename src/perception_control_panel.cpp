@@ -99,7 +99,7 @@ void PerceptionControlPanel::buildUi()
 
   auto * request_box = new QGroupBox("Request", this);
   auto * request_layout = new QFormLayout(request_box);
-  target_block_edit_ = new QLineEdit("wm_block_1", request_box);
+  target_block_edit_ = new QLineEdit("block_0", request_box);
   timeout_spin_ = new QDoubleSpinBox(request_box);
   timeout_spin_->setRange(0.1, 120.0);
   timeout_spin_->setSingleStep(0.5);
