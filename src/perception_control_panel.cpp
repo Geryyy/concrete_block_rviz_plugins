@@ -47,6 +47,9 @@ void PerceptionControlPanel::load(const rviz_common::Config & config)
   if (config.mapGetString("TaskStatusService", &value)) {
     task_status_service_edit_->setText(value);
   }
+  if (config.mapGetString("ClearWorldService", &value)) {
+    clear_world_service_edit_->setText(value);
+  }
   if (config.mapGetString("TargetBlockId", &value)) {
     target_block_edit_->setText(value);
   }
@@ -71,6 +74,7 @@ void PerceptionControlPanel::save(rviz_common::Config config) const
   rviz_common::Panel::save(config);
   config.mapSetValue("RunPoseService", run_pose_service_edit_->text());
   config.mapSetValue("TaskStatusService", task_status_service_edit_->text());
+  config.mapSetValue("ClearWorldService", clear_world_service_edit_->text());
   config.mapSetValue("TargetBlockId", target_block_edit_->text());
   config.mapSetValue("TimeoutS", static_cast<float>(timeout_spin_->value()));
   config.mapSetValue("EnableDebug", enable_debug_check_->isChecked());
@@ -87,8 +91,11 @@ void PerceptionControlPanel::buildUi()
     QString::fromStdString(run_pose_service_name_), services_box);
   task_status_service_edit_ = new QLineEdit(
     QString::fromStdString(task_status_service_name_), services_box);
+  clear_world_service_edit_ = new QLineEdit(
+    QString::fromStdString(clear_world_service_name_), services_box);
   services_layout->addRow("Pose", run_pose_service_edit_);
   services_layout->addRow("Task", task_status_service_edit_);
+  services_layout->addRow("Clear", clear_world_service_edit_);
 
   auto * request_box = new QGroupBox("Request", this);
   auto * request_layout = new QFormLayout(request_box);
@@ -114,10 +121,12 @@ void PerceptionControlPanel::buildUi()
   refine_block_button_ = new QPushButton("Refine Block", buttons_box);
   set_task_move_button_ = new QPushButton("Set TASK_MOVE", buttons_box);
   refine_grasped_button_ = new QPushButton("Refine Grasped", buttons_box);
+  clear_world_button_ = new QPushButton("Clear World Model", buttons_box);
   buttons_layout->addWidget(scene_discovery_button_);
   buttons_layout->addWidget(refine_block_button_);
   buttons_layout->addWidget(set_task_move_button_);
   buttons_layout->addWidget(refine_grasped_button_);
+  buttons_layout->addWidget(clear_world_button_);
 
   status_label_ = new QLabel("Not initialized", this);
   status_label_->setWordWrap(true);
@@ -142,6 +151,9 @@ void PerceptionControlPanel::buildUi()
     const std::string target = refine_grasped_use_target_check_->isChecked() ?
       target_block_edit_->text().trimmed().toStdString() : "";
     sendPoseRequest("REFINE_GRASPED", target);
+  });
+  connect(clear_world_button_, &QPushButton::clicked, this, [this]() {
+    sendClearWorldRequest();
   });
 }
 
@@ -233,6 +245,43 @@ void PerceptionControlPanel::sendTaskMoveRequest()
     });
 }
 
+void PerceptionControlPanel::sendClearWorldRequest()
+{
+  if (!node_) {
+    setStatus("RViz ROS node unavailable", true);
+    return;
+  }
+
+  ensureClients();
+  if (!clear_world_client_ || !clear_world_client_->service_is_ready()) {
+    setStatus(
+      QString("Service unavailable: %1").arg(clear_world_service_edit_->text()), true);
+    return;
+  }
+
+  auto request = std::make_shared<ClearWorldModel::Request>();
+
+  setBusy(true);
+  setStatus("Sent clear world model");
+
+  clear_world_client_->async_send_request(
+    request,
+    [this](rclcpp::Client<ClearWorldModel>::SharedFuture future) {
+      const auto response = future.get();
+      const QString message = QString("Clear world model: %1\ncleared=%2\n%3")
+        .arg(response->success ? "success" : "failed")
+        .arg(response->cleared_count)
+        .arg(QString::fromStdString(response->message));
+      QMetaObject::invokeMethod(
+        this,
+        [this, message, success = response->success]() {
+          setBusy(false);
+          setStatus(message, !success);
+        },
+        Qt::QueuedConnection);
+    });
+}
+
 void PerceptionControlPanel::ensureClients()
 {
   if (!node_) {
@@ -250,6 +299,12 @@ void PerceptionControlPanel::ensureClients()
     task_status_service_name_ = task_status_name;
     task_status_client_ = node_->create_client<SetBlockTaskStatus>(task_status_service_name_);
   }
+
+  const std::string clear_world_name = clear_world_service_edit_->text().trimmed().toStdString();
+  if (!clear_world_client_ || clear_world_name != clear_world_service_name_) {
+    clear_world_service_name_ = clear_world_name;
+    clear_world_client_ = node_->create_client<ClearWorldModel>(clear_world_service_name_);
+  }
 }
 
 void PerceptionControlPanel::setBusy(bool busy)
@@ -259,6 +314,7 @@ void PerceptionControlPanel::setBusy(bool busy)
   refine_block_button_->setEnabled(!busy_);
   set_task_move_button_->setEnabled(!busy_);
   refine_grasped_button_->setEnabled(!busy_);
+  clear_world_button_->setEnabled(!busy_);
 }
 
 void PerceptionControlPanel::setStatus(const QString & text, bool error)
