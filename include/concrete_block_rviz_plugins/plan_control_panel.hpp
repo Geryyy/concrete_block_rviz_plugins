@@ -32,8 +32,11 @@ private:
   using PlanControl = concrete_block_assembly_interfaces::srv::PlanControl;
 
   void buildUi();
-  void sendCommand(const std::string & command, const std::string & plan_name);
-  void refreshPlans();
+  void sendCommand(
+    const std::string & command, const std::string & plan_name,
+    const std::string & plans_file = "");
+  void reloadPlans();
+  void browsePlansFile();
   void ensureClient();
   void setBusy(bool busy);
   void setStatus(const QString & text, bool error = false);
@@ -43,8 +46,10 @@ private:
   std::string service_name_{"/concrete_block_wall_plan_server/plan_control"};
 
   QLineEdit * service_edit_{nullptr};
+  QLineEdit * plans_file_edit_{nullptr};
   QComboBox * plan_combo_{nullptr};
-  QPushButton * refresh_button_{nullptr};
+  QPushButton * browse_button_{nullptr};
+  QPushButton * reload_button_{nullptr};
   QPushButton * load_button_{nullptr};
   QPushButton * clear_button_{nullptr};
   QLabel * status_label_{nullptr};

@@ -1,5 +1,6 @@
 #include "concrete_block_rviz_plugins/plan_control_panel.hpp"
 
+#include <QFileDialog>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -14,6 +15,13 @@
 
 namespace concrete_block_rviz_plugins
 {
+
+namespace
+{
+constexpr const char * kDefaultPlansFile =
+  "/workspaces/ros2_baustelle_ws/src/concrete_block_stack/"
+  "concrete_block_assembly_planning/config/wall_plans.yaml";
+}  // namespace
 
 PlanControlPanel::PlanControlPanel(QWidget * parent)
 : rviz_common::Panel(parent)
@@ -30,8 +38,8 @@ void PlanControlPanel::onInitialize()
   }
   node_ = ros_node_abstraction->get_raw_node();
   ensureClient();
-  setStatus("Ready — press Refresh to list plans");
-  refreshPlans();
+  setStatus("Ready — press Reload to load plans from the YAML");
+  reloadPlans();
 }
 
 void PlanControlPanel::load(const rviz_common::Config & config)
@@ -41,12 +49,16 @@ void PlanControlPanel::load(const rviz_common::Config & config)
   if (config.mapGetString("PlanControlService", &value)) {
     service_edit_->setText(value);
   }
+  if (config.mapGetString("WallPlansFile", &value)) {
+    plans_file_edit_->setText(value);
+  }
 }
 
 void PlanControlPanel::save(rviz_common::Config config) const
 {
   rviz_common::Panel::save(config);
   config.mapSetValue("PlanControlService", service_edit_->text());
+  config.mapSetValue("WallPlansFile", plans_file_edit_->text());
 }
 
 void PlanControlPanel::buildUi()
@@ -56,16 +68,24 @@ void PlanControlPanel::buildUi()
   auto * config_box = new QGroupBox("Wall plan control", this);
   auto * config_layout = new QFormLayout(config_box);
   service_edit_ = new QLineEdit(QString::fromStdString(service_name_), config_box);
+
+  auto * file_row = new QHBoxLayout();
+  plans_file_edit_ = new QLineEdit(kDefaultPlansFile, config_box);
+  browse_button_ = new QPushButton("Browse…", config_box);
+  file_row->addWidget(plans_file_edit_);
+  file_row->addWidget(browse_button_);
+
   plan_combo_ = new QComboBox(config_box);
   plan_combo_->setEditable(false);
   config_layout->addRow("Plan control service", service_edit_);
+  config_layout->addRow("Plans YAML", file_row);
   config_layout->addRow("Plan", plan_combo_);
 
   auto * button_row = new QHBoxLayout();
-  refresh_button_ = new QPushButton("Refresh", this);
+  reload_button_ = new QPushButton("Reload", this);
   load_button_ = new QPushButton("Load", this);
   clear_button_ = new QPushButton("Clear", this);
-  button_row->addWidget(refresh_button_);
+  button_row->addWidget(reload_button_);
   button_row->addWidget(load_button_);
   button_row->addWidget(clear_button_);
 
@@ -78,7 +98,8 @@ void PlanControlPanel::buildUi()
   root_layout->addWidget(status_label_);
   root_layout->addStretch(1);
 
-  connect(refresh_button_, &QPushButton::clicked, this, [this]() {refreshPlans();});
+  connect(browse_button_, &QPushButton::clicked, this, [this]() {browsePlansFile();});
+  connect(reload_button_, &QPushButton::clicked, this, [this]() {reloadPlans();});
   connect(
     load_button_, &QPushButton::clicked, this, [this]() {
       sendCommand("activate", plan_combo_->currentText().trimmed().toStdString());
@@ -87,12 +108,24 @@ void PlanControlPanel::buildUi()
     clear_button_, &QPushButton::clicked, this, [this]() {sendCommand("clear", "");});
 }
 
-void PlanControlPanel::refreshPlans()
+void PlanControlPanel::browsePlansFile()
 {
-  sendCommand("list", "");
+  const QString start = plans_file_edit_->text().trimmed();
+  const QString picked = QFileDialog::getOpenFileName(
+    this, "Select wall plans YAML", start, "YAML files (*.yaml *.yml);;All files (*)");
+  if (!picked.isEmpty()) {
+    plans_file_edit_->setText(picked);
+    reloadPlans();
+  }
 }
 
-void PlanControlPanel::sendCommand(const std::string & command, const std::string & plan_name)
+void PlanControlPanel::reloadPlans()
+{
+  sendCommand("reload", "", plans_file_edit_->text().trimmed().toStdString());
+}
+
+void PlanControlPanel::sendCommand(
+  const std::string & command, const std::string & plan_name, const std::string & plans_file)
 {
   if (!node_) {
     setStatus("RViz ROS node unavailable", true);
@@ -113,6 +146,7 @@ void PlanControlPanel::sendCommand(const std::string & command, const std::strin
   auto request = std::make_shared<PlanControl::Request>();
   request->command = command;
   request->wall_plan_name = plan_name;
+  request->wall_plans_file = plans_file;
 
   setBusy(true);
   setStatus(QString::fromStdString("Sending '" + command + "'…"));
@@ -126,13 +160,14 @@ void PlanControlPanel::sendCommand(const std::string & command, const std::strin
         plans << QString::fromStdString(name);
       }
       const QString active = QString::fromStdString(response->active_plan);
+      const QString loaded_file = QString::fromStdString(response->wall_plans_file);
       const bool ok = response->success;
       const QString message = QString::fromStdString(response->message);
       QMetaObject::invokeMethod(
         this,
-        [this, command, plans, active, ok, message]() {
+        [this, command, plans, active, loaded_file, ok, message]() {
           setBusy(false);
-          if (command == "list" && ok) {
+          if ((command == "list" || command == "reload") && ok) {
             const QString keep = plan_combo_->currentText();
             plan_combo_->clear();
             plan_combo_->addItems(plans);
@@ -142,6 +177,9 @@ void PlanControlPanel::sendCommand(const std::string & command, const std::strin
             }
             if (idx >= 0) {
               plan_combo_->setCurrentIndex(idx);
+            }
+            if (!loaded_file.isEmpty()) {
+              plans_file_edit_->setText(loaded_file);
             }
           }
           setStatus(message, !ok);
@@ -165,7 +203,8 @@ void PlanControlPanel::ensureClient()
 void PlanControlPanel::setBusy(bool busy)
 {
   busy_ = busy;
-  refresh_button_->setEnabled(!busy_);
+  browse_button_->setEnabled(!busy_);
+  reload_button_->setEnabled(!busy_);
   load_button_->setEnabled(!busy_);
   clear_button_->setEnabled(!busy_);
 }
