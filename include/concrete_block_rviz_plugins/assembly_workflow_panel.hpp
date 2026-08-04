@@ -1,0 +1,65 @@
+#pragma once
+
+#include <memory>
+
+#include <QLabel>
+#include <QPushButton>
+#include <QString>
+#include <QStringList>
+
+#include "concrete_block_world_model_interfaces/srv/run_pose_estimation.hpp"
+#include "lsrl_behavior_tree/action/execute_bt.hpp"
+#include "rclcpp/rclcpp.hpp"
+#include "rclcpp_action/rclcpp_action.hpp"
+#include "rviz_common/panel.hpp"
+#include "std_msgs/msg/string.hpp"
+
+namespace concrete_block_rviz_plugins
+{
+
+class AssemblyWorkflowPanel : public rviz_common::Panel
+{
+  Q_OBJECT
+
+public:
+  explicit AssemblyWorkflowPanel(QWidget * parent = nullptr);
+  void onInitialize() override;
+
+private:
+  using ExecuteBT = lsrl_behavior_tree::action::ExecuteBT;
+  using GoalHandleExecuteBT = rclcpp_action::ClientGoalHandle<ExecuteBT>;
+  using RunPoseEstimation = concrete_block_world_model_interfaces::srv::RunPoseEstimation;
+
+  void buildUi();
+  void startSession();
+  void sendCommand(const std::string & command);
+  void refreshSceneEstimate();
+  void setExpectedCommand(const QString & command);
+  void updateButtonEnablement();
+  void setStatus(const QString & text, bool error = false);
+
+  rclcpp::Node::SharedPtr node_;
+  rclcpp_action::Client<ExecuteBT>::SharedPtr execute_client_;
+  rclcpp::Client<RunPoseEstimation>::SharedPtr run_pose_client_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr command_pub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr state_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr refinement_status_sub_;
+  QPushButton * start_button_{nullptr};
+  QPushButton * acquire_button_{nullptr};
+  QPushButton * pick_button_{nullptr};
+  QPushButton * hover_button_{nullptr};
+  QPushButton * measure_button_{nullptr};
+  QPushButton * correct_button_{nullptr};
+  QPushButton * refresh_scene_button_{nullptr};
+  QPushButton * place_button_{nullptr};
+  QLabel * state_label_{nullptr};
+  QLabel * refinement_label_{nullptr};
+  QLabel * execution_label_{nullptr};
+  QLabel * status_label_{nullptr};
+  QString expected_command_;
+  QStringList expected_commands_;
+  bool session_active_{false};
+  bool refresh_in_flight_{false};
+};
+
+}  // namespace concrete_block_rviz_plugins

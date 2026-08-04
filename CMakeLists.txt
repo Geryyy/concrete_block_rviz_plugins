@@ -12,8 +12,11 @@ set(CMAKE_AUTOMOC ON)
 find_package(ament_cmake REQUIRED)
 find_package(concrete_block_assembly_interfaces REQUIRED)
 find_package(concrete_block_world_model_interfaces REQUIRED)
+find_package(ament_index_cpp REQUIRED)
+find_package(lsrl_behavior_tree REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_action REQUIRED)
 find_package(rviz_common REQUIRED)
 find_package(Qt5 REQUIRED COMPONENTS Core Gui Widgets)
 
@@ -22,18 +25,23 @@ add_definitions(-DQT_NO_KEYWORDS)
 set(${PROJECT_NAME}_HDRS
   include/concrete_block_rviz_plugins/perception_control_panel.hpp
   include/concrete_block_rviz_plugins/plan_control_panel.hpp
+  include/concrete_block_rviz_plugins/assembly_workflow_panel.hpp
 )
 
 set(${PROJECT_NAME}_SRCS
   src/perception_control_panel.cpp
   src/plan_control_panel.cpp
+  src/assembly_workflow_panel.cpp
 )
 
 set(${PROJECT_NAME}_DEPS
   concrete_block_assembly_interfaces
   concrete_block_world_model_interfaces
+  ament_index_cpp
+  lsrl_behavior_tree
   pluginlib
   rclcpp
+  rclcpp_action
   rviz_common
 )
 

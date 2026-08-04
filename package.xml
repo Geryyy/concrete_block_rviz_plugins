@@ -12,8 +12,12 @@
 
   <depend>concrete_block_assembly_interfaces</depend>
   <depend>concrete_block_world_model_interfaces</depend>
+  <depend>ament_index_cpp</depend>
+  <depend>lsrl_behavior_tree</depend>
   <depend>pluginlib</depend>
   <depend>rclcpp</depend>
+  <depend>rclcpp_action</depend>
+  <depend>std_msgs</depend>
   <depend>rviz_common</depend>
 
   <export>

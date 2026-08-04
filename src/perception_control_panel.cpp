@@ -167,7 +167,8 @@ void PerceptionControlPanel::sendPoseRequest(
   }
 
   ensureClients();
-  if (!run_pose_client_ || !run_pose_client_->service_is_ready()) {
+  if (!run_pose_client_ ||
+    !run_pose_client_->wait_for_service(std::chrono::seconds(2))) {
     setStatus(
       QString("Service unavailable: %1").arg(run_pose_service_edit_->text()), true);
     return;
@@ -214,7 +215,8 @@ void PerceptionControlPanel::sendTaskMoveRequest()
   }
 
   ensureClients();
-  if (!task_status_client_ || !task_status_client_->service_is_ready()) {
+  if (!task_status_client_ ||
+    !task_status_client_->wait_for_service(std::chrono::seconds(2))) {
     setStatus(
       QString("Service unavailable: %1").arg(task_status_service_edit_->text()), true);
     return;
@@ -253,7 +255,8 @@ void PerceptionControlPanel::sendClearWorldRequest()
   }
 
   ensureClients();
-  if (!clear_world_client_ || !clear_world_client_->service_is_ready()) {
+  if (!clear_world_client_ ||
+    !clear_world_client_->wait_for_service(std::chrono::seconds(2))) {
     setStatus(
       QString("Service unavailable: %1").arg(clear_world_service_edit_->text()), true);
     return;
