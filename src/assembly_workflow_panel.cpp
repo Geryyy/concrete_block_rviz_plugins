@@ -3,6 +3,7 @@
 #include <chrono>
 
 #include <QGroupBox>
+#include <QHBoxLayout>
 #include <QMetaObject>
 #include <QVBoxLayout>
 
@@ -52,6 +53,31 @@ void AssemblyWorkflowPanel::onInitialize()
           refinement_label_->setText(text);
         }, Qt::QueuedConnection);
     });
+  residual_indicator_sub_ = node_->create_subscription<std_msgs::msg::Bool>(
+    "/assembly_operator/placement_residual_within_indicator", rclcpp::QoS(1).transient_local(),
+    [this](const std_msgs::msg::Bool::SharedPtr message) {
+      QMetaObject::invokeMethod(this, [this, within = message->data]() {
+        residual_indicator_measured_ = true;
+        residual_within_indicator_threshold_ = within;
+        setResidualLight(within, true);
+      }, Qt::QueuedConnection);
+    });
+  residual_indicator_threshold_sub_ = node_->create_subscription<std_msgs::msg::Float64>(
+    "/assembly_operator/placement_indicator_threshold_m", rclcpp::QoS(1).transient_local(),
+    [this](const std_msgs::msg::Float64::SharedPtr message) {
+      QMetaObject::invokeMethod(this, [this, threshold = message->data]() {
+        residual_indicator_threshold_m_ = threshold;
+        setResidualLight(residual_within_indicator_threshold_, residual_indicator_measured_);
+      }, Qt::QueuedConnection);
+    });
+  residual_translation_error_sub_ = node_->create_subscription<std_msgs::msg::Float64>(
+    "/assembly_operator/placement_translation_error_m", rclcpp::QoS(1).transient_local(),
+    [this](const std_msgs::msg::Float64::SharedPtr message) {
+      QMetaObject::invokeMethod(this, [this, error_m = message->data]() {
+        residual_translation_error_m_ = error_m;
+        setResidualLight(residual_within_indicator_threshold_, residual_indicator_measured_);
+      }, Qt::QueuedConnection);
+    });
   setStatus("Start an operator-guided task session");
 }
 
@@ -76,6 +102,14 @@ void AssemblyWorkflowPanel::buildUi()
   state_label_ = new QLabel("No active session", this);
   refinement_label_ = new QLabel("Placement residual: not measured", this);
   refinement_label_->setWordWrap(true);
+  auto * residual_row = new QHBoxLayout();
+  residual_light_ = new QLabel(this);
+  residual_light_->setFixedSize(18, 18);
+  residual_light_label_ = new QLabel("Residual: not measured", this);
+  residual_row->addWidget(residual_light_);
+  residual_row->addWidget(residual_light_label_);
+  residual_row->addStretch(1);
+  setResidualLight(false, false);
   auto * plan_hint = new QLabel(
     "Plan: choose it in Plan Control and press Load before acquiring a task.", this);
   plan_hint->setWordWrap(true);
@@ -87,6 +121,7 @@ void AssemblyWorkflowPanel::buildUi()
   layout->addWidget(plan_hint);
   layout->addWidget(state_label_);
   layout->addWidget(refinement_label_);
+  layout->addLayout(residual_row);
   layout->addWidget(execution_label_);
   layout->addWidget(status_label_);
   layout->addStretch(1);
@@ -154,6 +189,9 @@ void AssemblyWorkflowPanel::startSession()
   session_active_ = true;
   setExpectedCommand("");
   refinement_label_->setText("Placement residual: not measured");
+  residual_indicator_measured_ = false;
+  residual_translation_error_m_ = 0.0;
+  setResidualLight(false, false);
   execution_label_->setText("Execution: starting");
   execute_client_->async_send_goal(goal, options);
   setStatus("Starting session");
@@ -245,6 +283,25 @@ void AssemblyWorkflowPanel::setStatus(const QString & text, bool error)
 {
   status_label_->setText(text);
   status_label_->setStyleSheet(error ? "QLabel { color: #b00020; }" : "");
+}
+
+void AssemblyWorkflowPanel::setResidualLight(bool within_threshold, bool measured)
+{
+  const auto threshold_cm = QString::number(residual_indicator_threshold_m_ * 100.0, 'f', 1);
+  const auto residual_cm = QString::number(residual_translation_error_m_ * 100.0, 'f', 1);
+  if (!measured) {
+    residual_light_->setStyleSheet(
+      "QLabel { background-color: #808080; border: 1px solid #404040; border-radius: 9px; }");
+    residual_light_label_->setText("Residual: not measured (threshold: " + threshold_cm + " cm)");
+    return;
+  }
+  residual_light_->setStyleSheet(
+    within_threshold ?
+    "QLabel { background-color: #26a269; border: 1px solid #1b6f47; border-radius: 9px; }" :
+    "QLabel { background-color: #e01b24; border: 1px solid #8a1016; border-radius: 9px; }");
+  residual_light_label_->setText(
+    "Residual: " + residual_cm + " cm / " + threshold_cm + " cm" +
+    (within_threshold ? " (within)" : " (above)"));
 }
 
 }  // namespace concrete_block_rviz_plugins

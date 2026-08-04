@@ -13,6 +13,8 @@
 #include "rclcpp_action/rclcpp_action.hpp"
 #include "rviz_common/panel.hpp"
 #include "std_msgs/msg/string.hpp"
+#include "std_msgs/msg/bool.hpp"
+#include "std_msgs/msg/float64.hpp"
 
 namespace concrete_block_rviz_plugins
 {
@@ -44,6 +46,9 @@ private:
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr command_pub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr state_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr refinement_status_sub_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr residual_indicator_sub_;
+  rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr residual_indicator_threshold_sub_;
+  rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr residual_translation_error_sub_;
   QPushButton * start_button_{nullptr};
   QPushButton * acquire_button_{nullptr};
   QPushButton * pick_button_{nullptr};
@@ -54,12 +59,20 @@ private:
   QPushButton * place_button_{nullptr};
   QLabel * state_label_{nullptr};
   QLabel * refinement_label_{nullptr};
+  QLabel * residual_light_{nullptr};
+  QLabel * residual_light_label_{nullptr};
   QLabel * execution_label_{nullptr};
   QLabel * status_label_{nullptr};
   QString expected_command_;
   QStringList expected_commands_;
   bool session_active_{false};
   bool refresh_in_flight_{false};
+  double residual_indicator_threshold_m_{0.10};
+  bool residual_indicator_measured_{false};
+  bool residual_within_indicator_threshold_{false};
+  double residual_translation_error_m_{0.0};
+
+  void setResidualLight(bool within_threshold, bool measured);
 };
 
 }  // namespace concrete_block_rviz_plugins
