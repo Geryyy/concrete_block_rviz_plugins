@@ -49,8 +49,14 @@ private:
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr residual_indicator_sub_;
   rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr residual_indicator_threshold_sub_;
   rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr residual_translation_error_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr pickup_refinement_status_sub_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr pickup_residual_indicator_sub_;
+  rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr pickup_translation_error_sub_;
   QPushButton * start_button_{nullptr};
   QPushButton * acquire_button_{nullptr};
+  QPushButton * pickup_hover_button_{nullptr};
+  QPushButton * pickup_measure_button_{nullptr};
+  QPushButton * pickup_correct_button_{nullptr};
   QPushButton * pick_button_{nullptr};
   QPushButton * hover_button_{nullptr};
   QPushButton * measure_button_{nullptr};
@@ -59,8 +65,11 @@ private:
   QPushButton * place_button_{nullptr};
   QLabel * state_label_{nullptr};
   QLabel * refinement_label_{nullptr};
+  QLabel * pickup_refinement_label_{nullptr};
   QLabel * residual_light_{nullptr};
   QLabel * residual_light_label_{nullptr};
+  QLabel * pickup_residual_light_{nullptr};
+  QLabel * pickup_residual_light_label_{nullptr};
   QLabel * execution_label_{nullptr};
   QLabel * status_label_{nullptr};
   QString expected_command_;
@@ -71,8 +80,12 @@ private:
   bool residual_indicator_measured_{false};
   bool residual_within_indicator_threshold_{false};
   double residual_translation_error_m_{0.0};
+  bool pickup_residual_measured_{false};
+  bool pickup_residual_within_tolerance_{false};
+  double pickup_translation_error_m_{0.0};
 
   void setResidualLight(bool within_threshold, bool measured);
+  void setPickupResidualLight(bool within_threshold, bool measured);
 };
 
 }  // namespace concrete_block_rviz_plugins

@@ -78,6 +78,30 @@ void AssemblyWorkflowPanel::onInitialize()
         setResidualLight(residual_within_indicator_threshold_, residual_indicator_measured_);
       }, Qt::QueuedConnection);
     });
+  pickup_refinement_status_sub_ = node_->create_subscription<std_msgs::msg::String>(
+    "/assembly_operator/pickup_refinement_status", rclcpp::QoS(1).transient_local(),
+    [this](const std_msgs::msg::String::SharedPtr message) {
+      QMetaObject::invokeMethod(this, [this, text = QString::fromStdString(message->data)]() {
+        pickup_refinement_label_->setText(text);
+      }, Qt::QueuedConnection);
+    });
+  pickup_residual_indicator_sub_ = node_->create_subscription<std_msgs::msg::Bool>(
+    "/assembly_operator/pickup_residual_within_indicator", rclcpp::QoS(1).transient_local(),
+    [this](const std_msgs::msg::Bool::SharedPtr message) {
+      QMetaObject::invokeMethod(this, [this, within = message->data]() {
+        pickup_residual_measured_ = true;
+        pickup_residual_within_tolerance_ = within;
+        setPickupResidualLight(within, true);
+      }, Qt::QueuedConnection);
+    });
+  pickup_translation_error_sub_ = node_->create_subscription<std_msgs::msg::Float64>(
+    "/assembly_operator/pickup_translation_error_m", rclcpp::QoS(1).transient_local(),
+    [this](const std_msgs::msg::Float64::SharedPtr message) {
+      QMetaObject::invokeMethod(this, [this, error_m = message->data]() {
+        pickup_translation_error_m_ = error_m;
+        setPickupResidualLight(pickup_residual_within_tolerance_, pickup_residual_measured_);
+      }, Qt::QueuedConnection);
+    });
   setStatus("Execute the next step of the active plan");
 }
 
@@ -88,20 +112,26 @@ void AssemblyWorkflowPanel::buildUi()
   auto * buttons = new QVBoxLayout(execution);
   start_button_ = new QPushButton("Execute next plan step", execution);
   acquire_button_ = new QPushButton("1. Acquire next task", execution);
-  pick_button_ = new QPushButton("2. Pick block", execution);
-  hover_button_ = new QPushButton("3. Move to placement hover", execution);
-  measure_button_ = new QPushButton("4. Measure placement residual (FK)", execution);
+  pickup_hover_button_ = new QPushButton("2. Move to pickup hover", execution);
+  pickup_measure_button_ = new QPushButton("3. Measure pickup", execution);
+  pickup_correct_button_ = new QPushButton("Correct pickup", execution);
+  pick_button_ = new QPushButton("4. Grasp block", execution);
+  hover_button_ = new QPushButton("5. Move to placement hover", execution);
+  measure_button_ = new QPushButton("6. Measure placement residual", execution);
   correct_button_ = new QPushButton("Apply hover correction", execution);
   refresh_scene_button_ = new QPushButton("Refresh LiDAR scene estimate (optional)", execution);
   place_button_ = new QPushButton("5. Place block", execution);
   for (auto * button : {
-      start_button_, acquire_button_, pick_button_, hover_button_, measure_button_,
+      start_button_, acquire_button_, pickup_hover_button_, pickup_measure_button_,
+      pickup_correct_button_, pick_button_, hover_button_, measure_button_,
       correct_button_, refresh_scene_button_, place_button_}) {
     buttons->addWidget(button);
   }
   state_label_ = new QLabel("No active session", this);
   refinement_label_ = new QLabel("Placement residual: not measured", this);
   refinement_label_->setWordWrap(true);
+  pickup_refinement_label_ = new QLabel("Pickup residual: not measured", this);
+  pickup_refinement_label_->setWordWrap(true);
   auto * residual_row = new QHBoxLayout();
   residual_light_ = new QLabel(this);
   residual_light_->setFixedSize(18, 18);
@@ -110,6 +140,14 @@ void AssemblyWorkflowPanel::buildUi()
   residual_row->addWidget(residual_light_label_);
   residual_row->addStretch(1);
   setResidualLight(false, false);
+  auto * pickup_residual_row = new QHBoxLayout();
+  pickup_residual_light_ = new QLabel(this);
+  pickup_residual_light_->setFixedSize(18, 18);
+  pickup_residual_light_label_ = new QLabel("Pickup residual: not measured", this);
+  pickup_residual_row->addWidget(pickup_residual_light_);
+  pickup_residual_row->addWidget(pickup_residual_light_label_);
+  pickup_residual_row->addStretch(1);
+  setPickupResidualLight(false, false);
   auto * plan_hint = new QLabel(
     "Plan: choose it in Plan Control and press Load before acquiring a task.", this);
   plan_hint->setWordWrap(true);
@@ -120,6 +158,8 @@ void AssemblyWorkflowPanel::buildUi()
   layout->addWidget(execution);
   layout->addWidget(plan_hint);
   layout->addWidget(state_label_);
+  layout->addWidget(pickup_refinement_label_);
+  layout->addLayout(pickup_residual_row);
   layout->addWidget(refinement_label_);
   layout->addLayout(residual_row);
   layout->addWidget(execution_label_);
@@ -127,6 +167,9 @@ void AssemblyWorkflowPanel::buildUi()
   layout->addStretch(1);
   connect(start_button_, &QPushButton::clicked, this, [this]() {startSession();});
   connect(acquire_button_, &QPushButton::clicked, this, [this]() {sendCommand("acquire");});
+  connect(pickup_hover_button_, &QPushButton::clicked, this, [this]() {sendCommand("pickup_hover");});
+  connect(pickup_measure_button_, &QPushButton::clicked, this, [this]() {sendCommand("pickup_measure");});
+  connect(pickup_correct_button_, &QPushButton::clicked, this, [this]() {sendCommand("pickup_correct");});
   connect(pick_button_, &QPushButton::clicked, this, [this]() {sendCommand("pick");});
   connect(hover_button_, &QPushButton::clicked, this, [this]() {sendCommand("hover");});
   connect(measure_button_, &QPushButton::clicked, this, [this]() {sendCommand("measure");});
@@ -189,9 +232,13 @@ void AssemblyWorkflowPanel::startSession()
   session_active_ = true;
   setExpectedCommand("");
   refinement_label_->setText("Placement residual: not measured");
+  pickup_refinement_label_->setText("Pickup residual: not measured");
   residual_indicator_measured_ = false;
   residual_translation_error_m_ = 0.0;
   setResidualLight(false, false);
+  pickup_residual_measured_ = false;
+  pickup_translation_error_m_ = 0.0;
+  setPickupResidualLight(false, false);
   execution_label_->setText("Execution: starting");
   execute_client_->async_send_goal(goal, options);
   setStatus("Starting session");
@@ -265,7 +312,12 @@ void AssemblyWorkflowPanel::updateButtonEnablement()
 {
   start_button_->setEnabled(!session_active_);
   acquire_button_->setEnabled(session_active_ && expected_command_ == "acquire");
-  pick_button_->setEnabled(session_active_ && expected_command_ == "pick");
+  pickup_hover_button_->setEnabled(session_active_ && expected_command_ == "pickup_hover");
+  pickup_measure_button_->setEnabled(
+    session_active_ && !refresh_in_flight_ && expected_commands_.contains("pickup_measure"));
+  pickup_correct_button_->setEnabled(
+    session_active_ && !refresh_in_flight_ && expected_commands_.contains("pickup_correct"));
+  pick_button_->setEnabled(session_active_ && expected_commands_.contains("pick"));
   hover_button_->setEnabled(session_active_ && expected_command_ == "hover");
   measure_button_->setEnabled(
     session_active_ && !refresh_in_flight_ && expected_commands_.contains("measure"));
@@ -277,6 +329,24 @@ void AssemblyWorkflowPanel::updateButtonEnablement()
   refresh_scene_button_->setEnabled(in_refinement && !refresh_in_flight_);
   place_button_->setEnabled(
     session_active_ && !refresh_in_flight_ && expected_commands_.contains("place"));
+}
+
+void AssemblyWorkflowPanel::setPickupResidualLight(bool within_tolerance, bool measured)
+{
+  const auto residual_cm = QString::number(pickup_translation_error_m_ * 100.0, 'f', 1);
+  if (!measured) {
+    pickup_residual_light_->setStyleSheet(
+      "QLabel { background-color: #808080; border: 1px solid #404040; border-radius: 9px; }");
+    pickup_residual_light_label_->setText("Pickup residual: not measured");
+    return;
+  }
+  pickup_residual_light_->setStyleSheet(
+    within_tolerance ?
+    "QLabel { background-color: #26a269; border: 1px solid #1b6f47; border-radius: 9px; }" :
+    "QLabel { background-color: #e01b24; border: 1px solid #8a1016; border-radius: 9px; }");
+  pickup_residual_light_label_->setText(
+    "Pickup residual: " + residual_cm + " cm" +
+    (within_tolerance ? " (within)" : " (correction recommended)"));
 }
 
 void AssemblyWorkflowPanel::setStatus(const QString & text, bool error)
