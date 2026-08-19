@@ -78,7 +78,7 @@ void AssemblyWorkflowPanel::onInitialize()
         setResidualLight(residual_within_indicator_threshold_, residual_indicator_measured_);
       }, Qt::QueuedConnection);
     });
-  setStatus("Start an operator-guided task session");
+  setStatus("Execute the next step of the active plan");
 }
 
 void AssemblyWorkflowPanel::buildUi()
@@ -86,7 +86,7 @@ void AssemblyWorkflowPanel::buildUi()
   auto * layout = new QVBoxLayout(this);
   auto * execution = new QGroupBox("Operator-guided assembly", this);
   auto * buttons = new QVBoxLayout(execution);
-  start_button_ = new QPushButton("Start single-block session", execution);
+  start_button_ = new QPushButton("Execute next plan step", execution);
   acquire_button_ = new QPushButton("1. Acquire next task", execution);
   pick_button_ = new QPushButton("2. Pick block", execution);
   hover_button_ = new QPushButton("3. Move to placement hover", execution);
