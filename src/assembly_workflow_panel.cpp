@@ -113,7 +113,7 @@ void AssemblyWorkflowPanel::buildUi()
   start_button_ = new QPushButton("Execute next plan step", execution);
   acquire_button_ = new QPushButton("1. Acquire next task", execution);
   pickup_hover_button_ = new QPushButton("2. Move to pickup hover", execution);
-  pickup_measure_button_ = new QPushButton("3. Measure pickup", execution);
+  pickup_measure_button_ = new QPushButton("3. Check pickup", execution);
   pickup_correct_button_ = new QPushButton("Correct pickup", execution);
   pick_button_ = new QPushButton("4. Grasp block", execution);
   hover_button_ = new QPushButton("5. Move to placement hover", execution);
