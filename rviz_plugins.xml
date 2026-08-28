@@ -17,4 +17,10 @@
     base_class_type="rviz_common::Panel">
     <description>Operator-gated single-block wall-assembly workflow.</description>
   </class>
+  <class
+    name="concrete_block_rviz_plugins/BehaviorTreePanel"
+    type="concrete_block_rviz_plugins::BehaviorTreePanel"
+    base_class_type="rviz_common::Panel">
+    <description>Load a behavior-tree catalog and run one through /execute_bt.</description>
+  </class>
 </library>
