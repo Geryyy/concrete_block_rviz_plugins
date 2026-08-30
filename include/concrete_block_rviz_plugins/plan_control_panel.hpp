@@ -7,6 +7,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QTimer>
 
 #include "concrete_block_assembly_interfaces/srv/plan_control.hpp"
 #include "rclcpp/rclcpp.hpp"
@@ -53,6 +54,7 @@ private:
   QPushButton * load_button_{nullptr};
   QPushButton * clear_button_{nullptr};
   QLabel * status_label_{nullptr};
+  QTimer * connect_timer_{nullptr};
   bool busy_{false};
 };
 

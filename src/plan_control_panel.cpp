@@ -38,8 +38,21 @@ void PlanControlPanel::onInitialize()
   }
   node_ = ros_node_abstraction->get_raw_node();
   ensureClient();
-  setStatus("Ready — press Reload to load plans from the YAML");
-  reloadPlans();
+  // The wall plan server is a separate node and is normally not up yet when
+  // RViz builds its panels, so calling reloadPlans() straight from here left a
+  // "Service unavailable" that nothing ever cleared -- the plan list stayed
+  // empty until someone pressed Reload by hand. Poll until the service appears
+  // instead, then load the list once.
+  setStatus("Waiting for the wall plan server…");
+  connect_timer_ = new QTimer(this);
+  connect(connect_timer_, &QTimer::timeout, this, [this]() {
+    ensureClient();
+    if (client_ && client_->service_is_ready()) {
+      connect_timer_->stop();
+      reloadPlans();
+    }
+  });
+  connect_timer_->start(1000);
 }
 
 void PlanControlPanel::load(const rviz_common::Config & config)
