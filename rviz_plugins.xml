@@ -18,6 +18,13 @@
     <description>Operator-gated single-block wall-assembly workflow.</description>
   </class>
   <class
+    name="concrete_block_rviz_plugins/CBSRunPanel"
+    type="concrete_block_rviz_plugins::CBSRunPanel"
+    base_class_type="rviz_common::Panel">
+    <description>One panel for a CBS run: plan setup, tree choice, start/stop and the
+    operator steps.</description>
+  </class>
+  <class
     name="concrete_block_rviz_plugins/BehaviorTreePanel"
     type="concrete_block_rviz_plugins::BehaviorTreePanel"
     base_class_type="rviz_common::Panel">

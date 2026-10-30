@@ -21,6 +21,13 @@
   <depend>rviz_common</depend>
   <depend>yaml-cpp</depend>
 
+  <!-- CBSRunPanel's default plans YAML. The BT catalog comes from
+       concrete_block_behavior_tree, which exec_depends on this package, so that
+       lookup stays optional (try/catch) to keep the two out of a cycle. -->
+  <exec_depend>concrete_block_assembly_planning</exec_depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+
   <export>
     <build_type>ament_cmake</build_type>
   </export>

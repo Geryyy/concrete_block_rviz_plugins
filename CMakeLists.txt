@@ -28,6 +28,7 @@ set(${PROJECT_NAME}_HDRS
   include/concrete_block_rviz_plugins/plan_control_panel.hpp
   include/concrete_block_rviz_plugins/assembly_workflow_panel.hpp
   include/concrete_block_rviz_plugins/behavior_tree_panel.hpp
+  include/concrete_block_rviz_plugins/cbs_run_panel.hpp
 )
 
 set(${PROJECT_NAME}_SRCS
@@ -35,6 +36,8 @@ set(${PROJECT_NAME}_SRCS
   src/plan_control_panel.cpp
   src/assembly_workflow_panel.cpp
   src/behavior_tree_panel.cpp
+  src/cbs_run_panel.cpp
+  src/cbs_run_state.cpp
 )
 
 # The behavior-tree panel is the only one built from a Qt Designer file. uic
@@ -110,6 +113,20 @@ install(
 )
 
 pluginlib_export_plugin_description_file(rviz_common rviz_plugins.xml)
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  # The panel's run-state logic only; no Qt, no RViz session.
+  ament_add_gtest(test_cbs_run_state
+    test/test_cbs_run_state.cpp
+    src/cbs_run_state.cpp
+  )
+  if(TARGET test_cbs_run_state)
+    target_include_directories(test_cbs_run_state PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+  endif()
+endif()
 
 ament_export_targets(export_${PROJECT_NAME})
 ament_export_libraries(${PROJECT_NAME})
