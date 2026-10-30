@@ -12,6 +12,8 @@
 
   <depend>concrete_block_assembly_interfaces</depend>
   <depend>concrete_block_world_model_interfaces</depend>
+  <!-- CBSRunPanel's MPC row: SolverHealth and SwaySettled, report only. -->
+  <depend>crane_msgs</depend>
   <depend>ament_index_cpp</depend>
   <depend>lsrl_behavior_tree</depend>
   <depend>pluginlib</depend>

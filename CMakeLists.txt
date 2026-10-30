@@ -12,6 +12,7 @@ set(CMAKE_AUTOMOC ON)
 find_package(ament_cmake REQUIRED)
 find_package(concrete_block_assembly_interfaces REQUIRED)
 find_package(concrete_block_world_model_interfaces REQUIRED)
+find_package(crane_msgs REQUIRED)
 find_package(ament_index_cpp REQUIRED)
 find_package(lsrl_behavior_tree REQUIRED)
 find_package(pluginlib REQUIRED)
@@ -52,6 +53,7 @@ set(${PROJECT_NAME}_UIS
 set(${PROJECT_NAME}_DEPS
   concrete_block_assembly_interfaces
   concrete_block_world_model_interfaces
+  crane_msgs
   ament_index_cpp
   lsrl_behavior_tree
   pluginlib

@@ -143,6 +143,33 @@ void CBSRunPanel::onInitialize()
   subscribe_within("placement_residual_within_indicator", &placement_);
   subscribe_error("placement_translation_error_m", &placement_);
 
+  // The run's own numbers, published next to the log lines that already carried them.
+  subscribeStatus("/cbs/status/task", &CBSRunState::taskStatus);
+  subscribeStatus("/cbs/status/plan", &CBSRunState::planStatus);
+  subscribeStatus("/cbs/status/inair", &CBSRunState::inAirStatus);
+  subscribeStatus("/cbs/status/load_off", &CBSRunState::loadOffStatus);
+  // Volatile depth 1, matching crane_mpc's publishers: these report, they do not latch.
+  status_subs_.push_back(
+    node_->create_subscription<crane_msgs::msg::SolverHealth>(
+      "/crane/mpc/solver_health", rclcpp::QoS(1),
+      [this](const crane_msgs::msg::SolverHealth::SharedPtr message) {
+        QMetaObject::invokeMethod(
+          this, [this, outcome = message->outcome, solve = message->solve_time]() {
+            state_.solverHealth(outcome, solve);
+            refresh();
+          }, Qt::QueuedConnection);
+      }));
+  status_subs_.push_back(
+    node_->create_subscription<crane_msgs::msg::SwaySettled>(
+      "/crane/sway_settled", rclcpp::QoS(1),
+      [this](const crane_msgs::msg::SwaySettled::SharedPtr message) {
+        QMetaObject::invokeMethod(
+          this, [this, settled = message->settled]() {
+            state_.swaySettled(settled);
+            refresh();
+          }, Qt::QueuedConnection);
+      }));
+
   const std::string catalog = environment_or(
     "BEHAVIOR_TREE_PANEL_BT_CATALOG",
     share_or_empty("concrete_block_behavior_tree") + "/config/bt_panel_catalog.yaml");
@@ -163,6 +190,21 @@ void CBSRunPanel::onInitialize()
     });
   connect_timer_->start(1000);
   refresh();
+}
+
+void CBSRunPanel::subscribeStatus(
+  const char * topic, void (CBSRunState::* into)(const std::string &))
+{
+  status_subs_.push_back(
+    node_->create_subscription<std_msgs::msg::String>(
+      topic, rclcpp::QoS(1).transient_local(),
+      [this, into](const std_msgs::msg::String::SharedPtr message) {
+        QMetaObject::invokeMethod(
+          this, [this, into, line = message->data]() {
+            (state_.*into)(line);
+            refresh();
+          }, Qt::QueuedConnection);
+      }));
 }
 
 void CBSRunPanel::load(const rviz_common::Config & config)
@@ -187,8 +229,15 @@ void CBSRunPanel::buildUi()
   // ── 1. status header ──────────────────────────────────────────────────
   auto * header = new QGroupBox("Run", this);
   auto * header_layout = new QVBoxLayout(header);
+  header_label_ = new QLabel("No task served yet", header);
+  header_label_->setWordWrap(true);
+  header_label_->setStyleSheet("QLabel { font-weight: bold; }");
   run_label_ = new QLabel("Run: idle", header);
   run_label_->setWordWrap(true);
+  // Two phase lines: the coarse bar an operator reads at a glance, and the BT node
+  // behind it, which is what a log or a bug report needs.
+  phase_bar_label_ = new QLabel(header);
+  phase_bar_label_->setWordWrap(true);
   phase_label_ = new QLabel("Phase: idle", header);
   phase_label_->setWordWrap(true);
   auto * header_buttons = new QHBoxLayout();
@@ -196,17 +245,38 @@ void CBSRunPanel::buildUi()
   retry_button_ = new QPushButton("Retry block", header);
   header_buttons->addWidget(stop_button_);
   header_buttons->addWidget(retry_button_);
+  header_layout->addWidget(header_label_);
   header_layout->addWidget(run_label_);
+  header_layout->addWidget(phase_bar_label_);
   header_layout->addWidget(phase_label_);
   header_layout->addLayout(header_buttons);
 
-  // ── 2. deadman banner ─────────────────────────────────────────────────
-  deadman_banner_ = new QLabel("HOLD DEADMAN (button12 / TUI 'z')", this);
-  deadman_banner_->setWordWrap(true);
-  deadman_banner_->setAlignment(Qt::AlignCenter);
-  deadman_banner_->setStyleSheet(
+  // ── 2. prompt banner ──────────────────────────────────────────────────
+  prompt_banner_ = new QLabel(this);
+  prompt_banner_->setWordWrap(true);
+  prompt_banner_->setAlignment(Qt::AlignCenter);
+  prompt_banner_->setStyleSheet(
     "QLabel { background-color: #f5c211; color: #241f31; font-weight: bold; padding: 6px; }");
-  deadman_banner_->setVisible(false);
+  prompt_banner_->setVisible(false);
+
+  // ── 2b. what the run reports ──────────────────────────────────────────
+  auto * reports = new QGroupBox("Status", this);
+  auto * reports_layout = new QVBoxLayout(reports);
+  planner_label_ = new QLabel("Planner: no request answered yet", reports);
+  planner_label_->setWordWrap(true);
+  in_air_label_ = new QLabel("In air: not measured", reports);
+  in_air_label_->setWordWrap(true);
+  touchdown_bar_ = new QProgressBar(reports);
+  touchdown_bar_->setTextVisible(false);
+  touchdown_label_ = new QLabel("Touchdown: not descending", reports);
+  touchdown_label_->setWordWrap(true);
+  mpc_label_ = new QLabel(reports);
+  mpc_label_->setWordWrap(true);
+  reports_layout->addWidget(planner_label_);
+  reports_layout->addWidget(in_air_label_);
+  reports_layout->addWidget(touchdown_bar_);
+  reports_layout->addWidget(touchdown_label_);
+  reports_layout->addWidget(mpc_label_);
 
   // ── 3. setup ──────────────────────────────────────────────────────────
   auto * setup = new QGroupBox("Setup", this);
@@ -277,7 +347,8 @@ void CBSRunPanel::buildUi()
   status_label_->setTextInteractionFlags(Qt::TextSelectableByMouse);
 
   root->addWidget(header);
-  root->addWidget(deadman_banner_);
+  root->addWidget(prompt_banner_);
+  root->addWidget(reports);
   root->addWidget(setup);
   root->addWidget(tree_box_);
   root->addWidget(step_box_);
@@ -345,7 +416,7 @@ void CBSRunPanel::loadCatalog(const std::string & catalog_file)
   // The field run, preselected; any other tree is one click away.
   auto * preselect = tree_radios_.front().first;
   for (const auto & entry : tree_radios_) {
-    if (entry.first->text().contains("Wall assembly")) {
+    if (entry.first->text().contains("Run plan (all blocks)")) {
       preselect = entry.first;
     }
   }
@@ -594,13 +665,27 @@ void CBSRunPanel::onOperatorState(const QString & latched)
 void CBSRunPanel::refresh()
 {
   const QString tree = QString::fromStdString(state_.tree_name());
+  header_label_->setText(QString::fromStdString(state_.header_text()));
   run_label_->setText(
     QString("Run: %1%2").arg(QString::fromStdString(state_.run_text()))
     .arg(tree.isEmpty() ? QString() : " — " + tree));
+  phase_bar_label_->setText(QString::fromStdString(state_.phase_bar()));
   phase_label_->setText(QString::fromStdString(state_.phase_text()));
-  deadman_banner_->setVisible(state_.deadman_wait());
+  const QString prompt = QString::fromStdString(state_.prompt());
+  prompt_banner_->setText(prompt);
+  prompt_banner_->setVisible(!prompt.isEmpty());
   stop_button_->setEnabled(state_.stop_available());
   retry_button_->setEnabled(state_.retry_available());
+
+  planner_label_->setText(QString::fromStdString(state_.planner_text()));
+  in_air_label_->setText(QString::fromStdString(state_.in_air_text()));
+  touchdown_label_->setText(QString::fromStdString(state_.touchdown_text()));
+  // Full bar is the release gate, not 100 % of m g r: that is the number the tree acts on.
+  const int gate = static_cast<int>(state_.unload_gate() * 100.0);
+  touchdown_bar_->setVisible(state_.touchdown_visible());
+  touchdown_bar_->setMaximum(gate > 0 ? gate : 100);
+  touchdown_bar_->setValue(static_cast<int>(state_.unload_fraction() * 100.0));
+  mpc_label_->setText(QString::fromStdString(state_.mpc_text()));
 
   bool tree_selected = false;
   for (const auto & entry : tree_radios_) {

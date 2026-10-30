@@ -7,6 +7,7 @@
 #include <QGroupBox>
 #include <QLabel>
 #include <QLineEdit>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QTimer>
@@ -21,6 +22,8 @@
 #include "concrete_block_rviz_plugins/cbs_run_state.hpp"
 #include "concrete_block_world_model_interfaces/srv/clear_world_model.hpp"
 #include "concrete_block_world_model_interfaces/srv/run_pose_estimation.hpp"
+#include "crane_msgs/msg/solver_health.hpp"
+#include "crane_msgs/msg/sway_settled.hpp"
 #include "lsrl_behavior_tree/action/execute_bt.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
@@ -78,6 +81,8 @@ private:
   void runSceneDiscovery();
   void clearWorldModel();
   void onOperatorState(const QString & latched);
+  // One latched `/cbs/status/*` line into `state_`, via the Qt thread.
+  void subscribeStatus(const char * topic, void (CBSRunState::* into)(const std::string &));
   void refresh();
   void setBusy(bool busy);
   void setStatus(const QString & text, bool error = false);
@@ -90,12 +95,20 @@ private:
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr command_pub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr state_sub_;
   std::vector<rclcpp::SubscriptionBase::SharedPtr> residual_subs_;
+  std::vector<rclcpp::SubscriptionBase::SharedPtr> status_subs_;
 
+  QLabel * header_label_{nullptr};
   QLabel * run_label_{nullptr};
   QLabel * phase_label_{nullptr};
+  QLabel * phase_bar_label_{nullptr};
   QPushButton * stop_button_{nullptr};
   QPushButton * retry_button_{nullptr};
-  QLabel * deadman_banner_{nullptr};
+  QLabel * prompt_banner_{nullptr};
+  QLabel * planner_label_{nullptr};
+  QLabel * in_air_label_{nullptr};
+  QProgressBar * touchdown_bar_{nullptr};
+  QLabel * touchdown_label_{nullptr};
+  QLabel * mpc_label_{nullptr};
   QLineEdit * plans_file_edit_{nullptr};
   QComboBox * plan_combo_{nullptr};
   QPushButton * reload_button_{nullptr};
