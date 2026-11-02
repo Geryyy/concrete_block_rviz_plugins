@@ -176,7 +176,7 @@ void CBSRunPanel::onInitialize()
   subscribeStatus("/cbs/status/plan", &CBSRunState::planStatus);
   subscribeStatus("/cbs/status/inair", &CBSRunState::inAirStatus);
   subscribeStatus("/cbs/status/load_off", &CBSRunState::loadOffStatus);
-  subscribeStatus("/cbs/status/pose", &CBSRunState::poseStatus);
+  subscribeStatus("/cbs/status/pose", &CBSRunState::poseStatus, rclcpp::QoS(10));
   // Volatile depth 1, matching crane_mpc's publishers: these report, they do not latch.
   status_subs_.push_back(
     node_->create_subscription<crane_msgs::msg::SolverHealth>(
@@ -228,11 +228,11 @@ void CBSRunPanel::onInitialize()
 }
 
 void CBSRunPanel::subscribeStatus(
-  const char * topic, void (CBSRunState::* into)(const std::string &))
+  const char * topic, void (CBSRunState::* into)(const std::string &), const rclcpp::QoS & qos)
 {
   status_subs_.push_back(
     node_->create_subscription<std_msgs::msg::String>(
-      topic, rclcpp::QoS(1).transient_local(),
+      topic, qos,
       [this, into](const std_msgs::msg::String::SharedPtr message) {
         QMetaObject::invokeMethod(
           this, [this, into, line = message->data]() {

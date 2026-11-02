@@ -49,7 +49,7 @@ public:
     Return
   };
 
-  // Residual light: not measured, within the 1 cm gate, correctable, do not correct.
+  // Residual light: not measured, within the 1 cm gate, correctable, no usable residual.
   enum class Light
   {
     Grey,
@@ -170,13 +170,17 @@ private:
   {
     double x, y, z;
     Source source;
+    bool restart;  // the first pass of a new approach: numbering and total start over
   };
   std::vector<Pass> passes_;
   // The last REFINE_GRASPED, waiting for the measurement it fed.
   Source grasped_{Source::Unknown};
+  // A carry or lift ran since the last pass, so the next one starts a new approach.
+  bool approach_restart_{false};
   Status placed_;
   std::string last_block_;
   bool placement_measured_{false};
+  bool placement_failed_{false};
   double placement_error_m_{0.0};
   double placement_dx_{0.0};
   double placement_dy_{0.0};

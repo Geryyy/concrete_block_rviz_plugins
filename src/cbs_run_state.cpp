@@ -224,7 +224,9 @@ void CBSRunState::startRequested(const std::string & tree_name)
   passes_.clear();
   placed_.clear();
   grasped_ = Source::Unknown;
+  approach_restart_ = false;
   placement_measured_ = false;
+  placement_failed_ = false;
 }
 
 void CBSRunState::goalAccepted(bool accepted)
@@ -247,6 +249,8 @@ void CBSRunState::feedback(
   const Phase reached = phase_of(node_name);
   if (reached != Phase::Unknown && current_status == "RUNNING") {
     phase_ = reached;
+    // The retry after a failed approach lifts and moves above again.
+    approach_restart_ = approach_restart_ || reached == Phase::Carry || reached == Phase::Lift;
   }
 }
 
@@ -286,10 +290,6 @@ void CBSRunState::operatorState(const std::string & latched)
       continue_command_ = command;
     }
   }
-  // A new measurement is awaited: the last one was taken before the correction moved.
-  if (expected_command_ == "measure") {
-    placement_measured_ = false;
-  }
 }
 
 void CBSRunState::taskStatus(const std::string & line)
@@ -307,7 +307,9 @@ void CBSRunState::taskStatus(const std::string & line)
     passes_.clear();
     placed_.clear();
     grasped_ = Source::Unknown;
+    approach_restart_ = false;
     placement_measured_ = false;
+    placement_failed_ = false;
   }
   task_ = next;
 }
@@ -319,8 +321,9 @@ void CBSRunState::inAirStatus(const std::string & line)
   in_air_ = parse_status(line);
   passes_.push_back(
     {number(in_air_, "world_x", NAN), number(in_air_, "world_y", NAN),
-      number(in_air_, "world_z", NAN), grasped_});
+      number(in_air_, "world_z", NAN), grasped_, approach_restart_});
   grasped_ = Source::Unknown;
+  approach_restart_ = false;
 }
 
 void CBSRunState::loadOffStatus(const std::string & line) {load_off_ = parse_status(line);}
@@ -341,7 +344,8 @@ void CBSRunState::poseStatus(const std::string & line)
 
 void CBSRunState::placementResidual(const std::string & text)
 {
-  if (text.rfind("Placement residual failed", 0) == 0) {
+  placement_failed_ = text.rfind("Placement residual failed", 0) == 0;
+  if (placement_failed_) {
     placement_measured_ = false;
     return;
   }
@@ -545,6 +549,11 @@ std::vector<CBSRunState::PassRow> CBSRunState::pass_rows() const
   double off_x = 0.0;
   double off_y = 0.0;
   for (const auto & measured : passes_) {
+    if (measured.restart) {
+      pass = 0;
+      off_x = 0.0;
+      off_y = 0.0;
+    }
     ++pass;
     const bool fk = measured.source == Source::Fk;
     const char * source = source_text(measured.source);
@@ -629,13 +638,18 @@ std::string CBSRunState::block_summary() const
 
 CBSRunState::Light CBSRunState::placement_light() const
 {
+  // A new measurement is awaited: the last one was taken before the correction moved.
+  if (expected_command_ == "measure") {
+    return Light::Grey;
+  }
+  if (placement_failed_) {
+    return Light::Red;
+  }
   if (!placement_measured_) {
     return Light::Grey;
   }
-  if (placement_source_ == Source::Fk || placement_error_m_ > kMaxCorrectionM) {
-    return Light::Red;
-  }
-  return placement_error_m_ < kMissGateM ? Light::Green : Light::Yellow;
+  // <= as EvaluatePlacementResidual's translation_tolerance_m; FK and clamped still correct.
+  return placement_error_m_ <= kMissGateM ? Light::Green : Light::Yellow;
 }
 
 std::string CBSRunState::placement_text() const
@@ -645,16 +659,17 @@ std::string CBSRunState::placement_text() const
     source_text(placement_source_));
   switch (placement_light()) {
     case Light::Grey: return "Residual: not measured";
-    case Light::Green: return head + ", within 1 cm: place";
-    case Light::Yellow:
-      return head + formatted(
-        ", over 1 cm: Correct moves hover by (%+.0f, %+.0f) mm (K0)", placement_dx_ * 1e3,
-        placement_dy_ * 1e3);
-    case Light::Red: break;
+    case Light::Green: return head + ", within 1 cm (yaw not checked): place";
+    case Light::Red: return "Residual: the measurement failed, nothing to correct";
+    case Light::Yellow: break;
   }
-  return placement_source_ == Source::Fk ?
-         head + ": the lidar did not see the block, measure again" :
-         head + ": beyond the 30 cm correction limit, check the measurement";
+  // The same clamp EvaluatePlacementResidual applies to the move.
+  const double d = std::hypot(placement_dx_, placement_dy_);
+  const double scale = d > kMaxCorrectionM ? kMaxCorrectionM / d : 1.0;
+  return head + formatted(
+    ", over 1 cm: Correct moves hover by (%+.0f, %+.0f) mm (K0)%s",
+    placement_dx_ * scale * 1e3, placement_dy_ * scale * 1e3,
+    scale < 1.0 ? ", clamped to 30 cm" : "");
 }
 
 double CBSRunState::unload_fraction() const {return number(load_off_, "unload");}

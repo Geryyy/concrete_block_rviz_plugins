@@ -81,8 +81,10 @@ private:
   void runSceneDiscovery();
   void clearWorldModel();
   void onOperatorState(const QString & latched);
-  // One latched `/cbs/status/*` line into `state_`, via the Qt thread.
-  void subscribeStatus(const char * topic, void (CBSRunState::* into)(const std::string &));
+  // One `/cbs/status/*` line into `state_`, via the Qt thread; latched unless `qos` says not.
+  void subscribeStatus(
+    const char * topic, void (CBSRunState::* into)(const std::string &),
+    const rclcpp::QoS & qos = rclcpp::QoS(1).transient_local());
   void refresh();
   void setBusy(bool busy);
   void setStatus(const QString & text, bool error = false);

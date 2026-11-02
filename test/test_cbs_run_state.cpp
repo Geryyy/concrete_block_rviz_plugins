@@ -279,6 +279,14 @@ TEST(CBSRunState, one_row_per_in_air_pass_with_the_shift_the_tree_applied)
     "pass 2: miss (-4, -3) = 5 mm · FK fallback · within, done · total (-24, -10) mm (world)");
   EXPECT_TRUE(rows[1].fk);
 
+  // A failed descent, the retry lifts and moves above again: a new approach, from pass 1.
+  state.feedback("lift", "RUNNING");
+  state.inAirStatus(
+    "pass=9 frame=K0_mounting_base x=8.210 y=3.340 z=-0.550 "
+    "world_x=-15.150 world_y=-2.990 world_z=0.590");
+  EXPECT_EQ(state.pass_rows().back().text.rfind("pass 1: ", 0), 0u);
+  EXPECT_NE(state.pass_rows().back().text.find("total (-24, -10) mm"), std::string::npos);
+
   state.poseStatus(
     "mode=REFINE_BLOCK block=block_2 ok=1 frame=world x=-14.990 y=-3.005 z=0.29");
   EXPECT_EQ(state.placed_text(), "Placed block_2: 11 mm off slot (+10, -5)");
@@ -289,7 +297,7 @@ TEST(CBSRunState, one_row_per_in_air_pass_with_the_shift_the_tree_applied)
   EXPECT_TRUE(state.placed_text().empty());
   EXPECT_EQ(
     state.last_block_text(),
-    "Last block block_2: in-air miss 5 mm after 2 passes, placed 11 mm off slot (+10, -5)");
+    "Last block block_2: in-air miss 26 mm after 3 passes, placed 11 mm off slot (+10, -5)");
 }
 
 TEST(CBSRunState, the_pickup_refine_of_the_same_block_is_not_its_placed_result)
@@ -304,44 +312,50 @@ TEST(CBSRunState, the_placement_light_agrees_with_the_auto_loops_gate)
 {
   using Light = CBSRunState::Light;
   CBSRunState state;
+  const auto measure = [&state](bool lidar, const char * dxyz, double error_m) {
+      state.operatorState("waiting:measure|place");
+      state.poseStatus(lidar ? "mode=REFINE_GRASPED ok=1" : "mode=REFINE_GRASPED ok=0");
+      state.placementResidual(std::string("dxyz=[") + dxyz + "] m");
+      state.placementError(error_m);
+      state.operatorState("waiting:correct|place");
+    };
   state.operatorState("waiting:measure|place");
   EXPECT_EQ(state.placement_light(), Light::Grey);
   EXPECT_FALSE(state.correct_available());
 
   // 2.3 cm: the old 4 cm tolerance read this as within; the auto loop would move.
-  state.poseStatus("mode=REFINE_GRASPED block=block_2 ok=1");
-  state.placementResidual(
-    "Placement residual (FK XY+yaw, block_2): dxyz=[0.020, -0.011, 0.000] m, |d|=0.023 m, "
-    "dyaw=0.1 deg; correction recommended");
-  state.placementError(0.023);
+  measure(true, "0.020, -0.011, 0.000", 0.023);
   EXPECT_EQ(state.placement_light(), Light::Yellow);
   EXPECT_TRUE(state.correct_available());
   EXPECT_EQ(
     state.placement_text(),
     "Residual 23 mm · lidar, over 1 cm: Correct moves hover by (+20, -11) mm (K0)");
 
-  // After the correction the old number is stale until measured again.
+  // Late join after a correction: the latched residual predates it.
   state.operatorState("waiting:measure|place");
   EXPECT_EQ(state.placement_light(), Light::Grey);
 
-  state.poseStatus("mode=REFINE_GRASPED block=block_2 ok=1");
-  state.placementResidual("dxyz=[0.004, 0.002, 0.000] m");
-  state.placementError(0.0045);
+  // The tree's <=: exactly 1 cm is within.
+  measure(true, "0.010, 0.000, 0.000", 0.010);
   EXPECT_EQ(state.placement_light(), Light::Green);
   EXPECT_FALSE(state.correct_available());
 
-  // The lidar missed: the number is FK's, and Correct would move on it.
-  state.poseStatus("mode=REFINE_GRASPED block=block_2 ok=0");
-  state.placementResidual("dxyz=[0.020, -0.011, 0.000] m");
-  state.placementError(0.023);
+  // The lidar missed: the FK residual is still a valid correction, only tagged.
+  measure(false, "0.020, -0.011, 0.000", 0.023);
+  EXPECT_EQ(state.placement_light(), Light::Yellow);
+  EXPECT_TRUE(state.correct_available());
+  EXPECT_NE(state.placement_text().find("· FK fallback"), std::string::npos);
+
+  // Beyond max_correction_m: the tree clamps the move, and so does the text.
+  measure(true, "0.400, 0.000, 0.000", 0.40);
+  EXPECT_TRUE(state.correct_available());
+  EXPECT_NE(
+    state.placement_text().find("(+300, +0) mm (K0), clamped to 30 cm"), std::string::npos);
+
+  // Nothing usable: Correct has nothing to move by.
+  state.placementResidual("Placement residual failed: Grasped block 'block_2' is absent");
   EXPECT_EQ(state.placement_light(), Light::Red);
   EXPECT_FALSE(state.correct_available());
-
-  // Beyond what EvaluatePlacementResidual would apply unclamped.
-  state.poseStatus("mode=REFINE_GRASPED block=block_2 ok=1");
-  state.placementResidual("dxyz=[0.400, 0.000, 0.000] m");
-  state.placementError(0.40);
-  EXPECT_EQ(state.placement_light(), Light::Red);
 }
 
 TEST(CBSRunState, the_activity_line_says_why_the_crane_is_not_moving)
