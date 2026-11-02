@@ -318,7 +318,8 @@ void CBSRunState::inAirStatus(const std::string & line)
 {
   in_air_ = parse_status(line);
   passes_.push_back(
-    {number(in_air_, "x"), number(in_air_, "y"), number(in_air_, "z"), grasped_});
+    {number(in_air_, "world_x", NAN), number(in_air_, "world_y", NAN),
+      number(in_air_, "world_z", NAN), grasped_});
   grasped_ = Source::Unknown;
 }
 
@@ -505,13 +506,17 @@ std::string CBSRunState::in_air_text() const
     "In air: pass %.0f, (%.3f, %.3f, %.3f), tilt %.2f deg", number(in_air_, "pass"),
     number(in_air_, "x"), number(in_air_, "y"), number(in_air_, "z"),
     number(in_air_, "tilt_deg"));
-  // Only against the waypoint the tree itself corrects to; without it there is no miss.
-  if (task_.count("approach_x") == 0 || task_.count("approach_y") == 0) {
+  // Only against the waypoint the tree itself corrects to, and in the task line's frame
+  // (`world`), not the measurement's own; without both there is no miss.
+  if (
+    task_.count("approach_x") == 0 || task_.count("approach_y") == 0 ||
+    in_air_.count("world_x") == 0 || in_air_.count("world_y") == 0)
+  {
     return text;
   }
   const double miss = std::hypot(
-    number(task_, "approach_x") - number(in_air_, "x"),
-    number(task_, "approach_y") - number(in_air_, "y"));
+    number(task_, "approach_x") - number(in_air_, "world_x"),
+    number(task_, "approach_y") - number(in_air_, "world_y"));
   return text + formatted(
     ", miss %.1f cm %s %.1f cm gate", miss * 100.0, miss < kMissGateM ? "within" : "over",
     kMissGateM * 100.0);
@@ -543,13 +548,12 @@ std::vector<CBSRunState::PassRow> CBSRunState::pass_rows() const
     ++pass;
     const bool fk = measured.source == Source::Fk;
     const char * source = source_text(measured.source);
-    if (!waypoint) {
-      rows.push_back(
-        {formatted("pass %d: block at (%.3f, %.3f)%s", pass, measured.x, measured.y, source),
-          fk});
+    if (!waypoint || std::isnan(measured.x) || std::isnan(measured.y)) {
+      rows.push_back({formatted("pass %d: no world pose to compare%s", pass, source), fk});
       continue;
     }
-    // The tree's own arithmetic: miss = waypoint - measured, and off_x/off_y sum the misses.
+    // The tree's own arithmetic, in `world`: miss = waypoint - measured, off_x/off_y sum the
+    // misses. The tree works in K0_mounting_base; a rigid transform keeps every |miss| and gate.
     const double miss_x = number(task_, "approach_x") - measured.x;
     const double miss_y = number(task_, "approach_y") - measured.y;
     const double miss = std::hypot(miss_x, miss_y);
@@ -606,7 +610,10 @@ std::string CBSRunState::placed_text() const
 std::string CBSRunState::block_summary() const
 {
   std::string text = "Last block " + value(task_, "block", "?") + ":";
-  if (!passes_.empty() && task_.count("approach_x") != 0 && task_.count("approach_y") != 0) {
+  if (
+    !passes_.empty() && !std::isnan(passes_.back().x) && task_.count("approach_x") != 0 &&
+    task_.count("approach_y") != 0)
+  {
     const auto & last = passes_.back();
     text += formatted(
       " in-air miss %.0f mm after %zu pass%s,",

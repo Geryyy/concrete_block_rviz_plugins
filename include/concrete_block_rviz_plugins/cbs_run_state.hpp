@@ -165,6 +165,7 @@ private:
   Status in_air_;
   Status load_off_;
 
+  // In `world`, the task line's frame; NaN without a world pose.
   struct Pass
   {
     double x, y, z;

@@ -193,16 +193,18 @@ TEST(CBSRunState, the_in_air_miss_needs_the_waypoint_the_tree_corrects_to)
   CBSRunState state;
   EXPECT_EQ(state.in_air_text(), "In air: not measured");
   state.inAirStatus(
-    "pass=2 frame=K0_mounting_base x=6.162 y=2.000 z=1.350 tilt_deg=1.20 samples=78");
+    "pass=2 frame=K0_mounting_base x=8.102 y=3.350 z=-0.550 tilt_deg=1.20 samples=78 "
+    "world_x=-15.162 world_y=-3.000 world_z=0.590");
   // No task line yet, so no target: the measurement alone, no invented miss.
   EXPECT_EQ(
-    state.in_air_text(), "In air: pass 2, (6.162, 2.000, 1.350), tilt 1.20 deg");
+    state.in_air_text(), "In air: pass 2, (8.102, 3.350, -0.550), tilt 1.20 deg");
 
-  state.taskStatus("plan=wall1 task=3/7 approach_x=6.174 approach_y=2.000");
+  state.taskStatus("plan=wall1 task=3/7 approach_x=-15.174 approach_y=-3.000");
   EXPECT_NE(state.in_air_text().find("miss 1.2 cm over 1.0 cm gate"), std::string::npos);
 
   state.inAirStatus(
-    "pass=3 frame=K0_mounting_base x=6.170 y=2.000 z=1.350 tilt_deg=1.20 samples=78");
+    "pass=3 frame=K0_mounting_base x=8.110 y=3.350 z=-0.550 tilt_deg=1.20 samples=78 "
+    "world_x=-15.170 world_y=-3.000 world_z=0.590");
   EXPECT_NE(state.in_air_text().find("miss 0.4 cm within 1.0 cm gate"), std::string::npos);
 }
 
@@ -247,29 +249,37 @@ TEST(CBSRunState, the_mpc_row_says_unknown_until_the_node_is_driving)
 
 TEST(CBSRunState, one_row_per_in_air_pass_with_the_shift_the_tree_applied)
 {
+  // The 281 sim's frames: the task line is in `world`, the tree measures in K0_mounting_base,
+  // which is world turned by pi and shifted (world (-15.00, -3.00, 0.29) is K0 (8.06, 3.35,
+  // -0.85)). Compared across the two, every miss read ~23 m.
   CBSRunState state;
   state.taskStatus(
-    "plan=wall1 task=3/7 block=block_2 target_x=6.000 target_y=2.000 target_z=1.050 "
-    "approach_x=6.174 approach_y=2.000");
+    "plan=wall1 task=3/7 block=block_2 target_x=-15.000 target_y=-3.000 target_z=0.290 "
+    "approach_x=-15.174 approach_y=-3.000");
   state.poseStatus("mode=REFINE_GRASPED block=block_2 ok=1");
-  state.inAirStatus("pass=7 x=6.150 y=2.010 z=1.350");
+  state.inAirStatus(
+    "pass=7 frame=K0_mounting_base x=8.210 y=3.340 z=-0.550 "
+    "world_x=-15.150 world_y=-2.990 world_z=0.590");
   // ForceSuccess hid this failure from the tree; the row must not.
   state.poseStatus("mode=REFINE_GRASPED block=block_2 ok=0");
-  state.inAirStatus("pass=8 x=6.170 y=2.003 z=1.350");
+  state.inAirStatus(
+    "pass=8 frame=K0_mounting_base x=8.230 y=3.347 z=-0.550 "
+    "world_x=-15.170 world_y=-2.997 world_z=0.590");
 
   const auto rows = state.pass_rows();
   ASSERT_EQ(rows.size(), 2u);
   // Numbered per block, not by the node's own counter.
   EXPECT_EQ(
     rows[0].text,
-    "pass 1: miss (+24, -10) = 26 mm · lidar · shift (+24, -10) mm · total (+24, -10) mm");
+    "pass 1: miss (-24, -10) = 26 mm · lidar · shift (-24, -10) mm · total (-24, -10) mm");
   EXPECT_FALSE(rows[0].fk);
   EXPECT_EQ(
     rows[1].text,
-    "pass 2: miss (+4, -3) = 5 mm · FK fallback · within, done · total (+24, -10) mm");
+    "pass 2: miss (-4, -3) = 5 mm · FK fallback · within, done · total (-24, -10) mm");
   EXPECT_TRUE(rows[1].fk);
 
-  state.poseStatus("mode=REFINE_BLOCK block=block_2 ok=1 frame=world x=6.010 y=1.995 z=1.05");
+  state.poseStatus(
+    "mode=REFINE_BLOCK block=block_2 ok=1 frame=world x=-14.990 y=-3.005 z=0.29");
   EXPECT_EQ(state.placed_text(), "Placed block_2: 11 mm off slot (+10, -5)");
 
   // The next block starts empty and the last one is summed up.
