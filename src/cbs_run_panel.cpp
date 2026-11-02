@@ -5,9 +5,7 @@
 #include <QMetaObject>
 #include <QStringList>
 
-#include <algorithm>
 #include <chrono>
-#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
@@ -177,6 +175,8 @@ void CBSRunPanel::onInitialize()
   subscribeStatus("/cbs/status/inair", &CBSRunState::inAirStatus);
   subscribeStatus("/cbs/status/load_off", &CBSRunState::loadOffStatus);
   subscribeStatus("/cbs/status/pose", &CBSRunState::poseStatus, rclcpp::QoS(10));
+  subscribeStatus("/cbs/status/place_pass", &CBSRunState::placePassStatus);
+  subscribeStatus("/cbs/status/settle", &CBSRunState::settleStatus);
   // Volatile depth 1, matching crane_mpc's publishers: these report, they do not latch.
   status_subs_.push_back(
     node_->create_subscription<crane_msgs::msg::SolverHealth>(
@@ -193,10 +193,8 @@ void CBSRunPanel::onInitialize()
       "/crane/sway_settled", rclcpp::QoS(1),
       [this](const crane_msgs::msg::SwaySettled::SharedPtr message) {
         QMetaObject::invokeMethod(
-          this, [this, settled = message->settled,
-          rate = std::max(std::abs(message->velocity[0]), std::abs(message->velocity[1])),
-          verdict = message->message]() {
-            state_.swaySettled(settled, rate, verdict);
+          this, [this, settled = message->settled]() {
+            state_.swaySettled(settled);
             refresh();
           }, Qt::QueuedConnection);
       }));

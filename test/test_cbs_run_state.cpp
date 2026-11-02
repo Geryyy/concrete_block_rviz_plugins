@@ -188,24 +188,14 @@ TEST(CBSRunState, the_plan_line_shows_the_numbers_or_the_refusal)
   EXPECT_EQ(state.planner_text(), "Planner refused: the goal is inside the headboard");
 }
 
-TEST(CBSRunState, the_in_air_miss_needs_the_waypoint_the_tree_corrects_to)
+TEST(CBSRunState, the_in_air_row_is_the_measurement_in_its_own_frame)
 {
   CBSRunState state;
   EXPECT_EQ(state.in_air_text(), "In air: not measured");
   state.inAirStatus(
-    "pass=2 frame=K0_mounting_base x=8.102 y=3.350 z=-0.550 tilt_deg=1.20 samples=78 "
-    "world_x=-15.162 world_y=-3.000 world_z=0.590");
-  // No task line yet, so no target: the measurement alone, no invented miss.
+    "pass=2 frame=K0_mounting_base x=8.102 y=3.350 z=-0.550 tilt_deg=1.20 samples=78");
   EXPECT_EQ(
-    state.in_air_text(), "In air: pass 2, (8.102, 3.350, -0.550), tilt 1.20 deg");
-
-  state.taskStatus("plan=wall1 task=3/7 approach_x=-15.174 approach_y=-3.000");
-  EXPECT_NE(state.in_air_text().find("miss 1.2 cm over 1.0 cm gate"), std::string::npos);
-
-  state.inAirStatus(
-    "pass=3 frame=K0_mounting_base x=8.110 y=3.350 z=-0.550 tilt_deg=1.20 samples=78 "
-    "world_x=-15.170 world_y=-3.000 world_z=0.590");
-  EXPECT_NE(state.in_air_text().find("miss 0.4 cm within 1.0 cm gate"), std::string::npos);
+    state.in_air_text(), "In air: (8.102, 3.350, -0.550) K0_mounting_base, tilt 1.20 deg");
 }
 
 TEST(CBSRunState, the_touchdown_bar_is_drawn_against_the_release_gate)
@@ -247,45 +237,35 @@ TEST(CBSRunState, the_mpc_row_says_unknown_until_the_node_is_driving)
   EXPECT_EQ(state.mpc_text(), "MPC: over budget in 63 ms · sway swinging");
 }
 
-TEST(CBSRunState, one_row_per_in_air_pass_with_the_shift_the_tree_applied)
+TEST(CBSRunState, one_row_per_in_air_pass_as_the_tree_decided_it)
 {
-  // The 281 sim's frames: the task line is in `world`, the tree measures in K0_mounting_base,
-  // which is world turned by pi and shifted (world (-15.00, -3.00, 0.29) is K0 (8.06, 3.35,
-  // -0.85)). Compared across the two, every miss read ~23 m.
   CBSRunState state;
   state.taskStatus(
     "plan=wall1 task=3/7 block=block_2 target_x=-15.000 target_y=-3.000 target_z=0.290 "
     "approach_x=-15.174 approach_y=-3.000");
+  // The 281 sim's block_0, in the tree's own K0 numbers.
   state.poseStatus("mode=REFINE_GRASPED block=block_2 ok=1");
-  state.inAirStatus(
-    "pass=7 frame=K0_mounting_base x=8.210 y=3.340 z=-0.550 "
-    "world_x=-15.150 world_y=-2.990 world_z=0.590");
+  state.placePassStatus(
+    "attempt=1 pass=1 verdict=shift miss_x=0.009 miss_y=-0.032 miss_z=-0.028 shift_x=0.009 "
+    "shift_y=-0.032 off_x=0.009 off_y=-0.032");
   // ForceSuccess hid this failure from the tree; the row must not.
   state.poseStatus("mode=REFINE_GRASPED block=block_2 ok=0");
-  state.inAirStatus(
-    "pass=8 frame=K0_mounting_base x=8.230 y=3.347 z=-0.550 "
-    "world_x=-15.170 world_y=-2.997 world_z=0.590");
+  state.placePassStatus(
+    "attempt=1 pass=2 verdict=within miss_x=-0.001 miss_y=0.002 miss_z=-0.003 shift_x=0.000 "
+    "shift_y=0.000 off_x=0.009 off_y=-0.032");
 
-  const auto rows = state.pass_rows();
+  const auto & rows = state.pass_rows();
   ASSERT_EQ(rows.size(), 2u);
-  // Numbered per block, not by the node's own counter.
   EXPECT_EQ(
     rows[0].text,
-    "pass 1: miss (-24, -10) = 26 mm · lidar · shift (-24, -10) mm · total (-24, -10) mm"
-    " (world)");
+    "attempt 1 pass 1: miss (+9, -32) = 33 mm · lidar · shift (+9, -32) mm · total (+9, -32) mm"
+    " (K0)");
   EXPECT_FALSE(rows[0].fk);
   EXPECT_EQ(
     rows[1].text,
-    "pass 2: miss (-4, -3) = 5 mm · FK fallback · within, done · total (-24, -10) mm (world)");
+    "attempt 1 pass 2: miss (-1, +2) = 2 mm · FK fallback · within, done · total (+9, -32) mm"
+    " (K0)");
   EXPECT_TRUE(rows[1].fk);
-
-  // A failed descent, the retry lifts and moves above again: a new approach, from pass 1.
-  state.feedback("lift", "RUNNING");
-  state.inAirStatus(
-    "pass=9 frame=K0_mounting_base x=8.210 y=3.340 z=-0.550 "
-    "world_x=-15.150 world_y=-2.990 world_z=0.590");
-  EXPECT_EQ(state.pass_rows().back().text.rfind("pass 1: ", 0), 0u);
-  EXPECT_NE(state.pass_rows().back().text.find("total (-24, -10) mm"), std::string::npos);
 
   state.poseStatus(
     "mode=REFINE_BLOCK block=block_2 ok=1 frame=world x=-14.990 y=-3.005 z=0.29");
@@ -297,7 +277,7 @@ TEST(CBSRunState, one_row_per_in_air_pass_with_the_shift_the_tree_applied)
   EXPECT_TRUE(state.placed_text().empty());
   EXPECT_EQ(
     state.last_block_text(),
-    "Last block block_2: in-air miss 26 mm after 3 passes, placed 11 mm off slot (+10, -5)");
+    "Last block block_2: in-air miss 2 mm after 2 passes, placed 11 mm off slot (+10, -5)");
 }
 
 TEST(CBSRunState, the_pickup_refine_of_the_same_block_is_not_its_placed_result)
@@ -367,14 +347,19 @@ TEST(CBSRunState, the_activity_line_says_why_the_crane_is_not_moving)
   state.feedback("Plan approach", "RUNNING", 100.0);
   EXPECT_EQ(state.activity_text(104.2), "Planning the next move… 4 s");
 
-  state.swaySettled(
-    1, 0.031,
-    "the measured sway rate [0.031, 0.012] rad/s is outside dq_u_settled [0.02, 0.02] on the "
-    "passive pair, measured 0.010 s ago");
+  // The bound the node gates on, not crane_mpc's: a lift waits on 0.05.
+  state.settleStatus(
+    "bound=0.050 rate=0.031 verdict=1 still=0 held=0.0 hold=2.7 elapsed=12.3 msg=not settled");
   state.feedback("Wait for the load to settle", "RUNNING", 110.0);
   EXPECT_EQ(
     state.activity_text(122.0),
-    "Waiting for the load to settle: sway 0.031 rad/s → 0.020 rad/s (12 s)");
+    "Waiting for the load to settle: sway 0.031 rad/s → 0.050 rad/s (12 s)");
+  state.settleStatus(
+    "bound=0.000 rate=0.012 verdict=2 still=1 held=1.2 hold=2.7 elapsed=14.0 msg=dwell");
+  EXPECT_EQ(
+    state.activity_text(124.0),
+    "Waiting for the load to settle: sway 0.012 rad/s → MPC verdict settled, held 1.2 of 2.7 s "
+    "(14 s)");
 
   state.feedback("MeasureBlockFromGripper", "RUNNING", 130.0);
   EXPECT_EQ(

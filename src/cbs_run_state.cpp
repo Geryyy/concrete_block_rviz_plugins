@@ -20,9 +20,6 @@ namespace
 constexpr const char * kWaitingPrefix = "waiting:";
 // The gate subtree_place_block.xml's correction loop stops at (`miss^2 >= 1e-4`).
 constexpr double kMissGateM = 0.01;
-constexpr double kMissZGateM = 0.08;  // same tree, `miss_z^2 < 0.0064`
-constexpr double kWaypointAboveM = 0.30;  // dz_z = place_z + 0.30
-constexpr int kLoopPasses = 3;  // Repeat num_cycles; the pass after them is the final check
 // EvaluatePlacementResidual's max_correction_m in operator_guided_single_block.xml.
 constexpr double kMaxCorrectionM = 0.30;
 
@@ -190,6 +187,16 @@ std::string formatted(const char * format, ...)
   return std::string(line);
 }
 
+const char * source_text(CBSRunState::Source source)
+{
+  switch (source) {
+    case CBSRunState::Source::Lidar: return " · lidar";
+    case CBSRunState::Source::Fk: return " · FK fallback";
+    case CBSRunState::Source::Unknown: break;
+  }
+  return "";
+}
+
 }  // namespace
 
 std::map<std::string, std::string> parse_status(const std::string & text)
@@ -221,10 +228,9 @@ void CBSRunState::startRequested(const std::string & tree_name)
   node_status_.clear();
   approval_node_.clear();
   phase_ = Phase::Unknown;
-  passes_.clear();
+  pass_rows_.clear();
   placed_.clear();
   grasped_ = Source::Unknown;
-  approach_restart_ = false;
   placement_measured_ = false;
   placement_failed_ = false;
 }
@@ -249,8 +255,6 @@ void CBSRunState::feedback(
   const Phase reached = phase_of(node_name);
   if (reached != Phase::Unknown && current_status == "RUNNING") {
     phase_ = reached;
-    // The retry after a failed approach lifts and moves above again.
-    approach_restart_ = approach_restart_ || reached == Phase::Carry || reached == Phase::Lift;
   }
 }
 
@@ -301,13 +305,12 @@ void CBSRunState::taskStatus(const std::string & line)
   // A re-served task (retry) keeps its history; a new block, or the first task line after
   // the latched replay, starts a fresh one.
   if (key(next) != key(task_)) {
-    if (!task_.empty() && (!passes_.empty() || !placed_.empty())) {
+    if (!task_.empty() && (!pass_rows_.empty() || !placed_.empty())) {
       last_block_ = block_summary();
     }
-    passes_.clear();
+    pass_rows_.clear();
     placed_.clear();
     grasped_ = Source::Unknown;
-    approach_restart_ = false;
     placement_measured_ = false;
     placement_failed_ = false;
   }
@@ -316,15 +319,34 @@ void CBSRunState::taskStatus(const std::string & line)
 
 void CBSRunState::planStatus(const std::string & line) {plan_ = parse_status(line);}
 
-void CBSRunState::inAirStatus(const std::string & line)
+void CBSRunState::inAirStatus(const std::string & line) {in_air_ = parse_status(line);}
+
+void CBSRunState::placePassStatus(const std::string & line)
 {
-  in_air_ = parse_status(line);
-  passes_.push_back(
-    {number(in_air_, "world_x", NAN), number(in_air_, "world_y", NAN),
-      number(in_air_, "world_z", NAN), grasped_, approach_restart_});
+  const Status pass = parse_status(line);
+  const std::string verdict = value(pass, "verdict");
+  std::string action = verdict;
+  if (verdict == "shift") {
+    action = formatted(
+      "shift (%+.0f, %+.0f) mm", number(pass, "shift_x") * 1e3, number(pass, "shift_y") * 1e3);
+  } else if (verdict == "within") {
+    action = "within, done";
+  } else if (verdict == "height") {
+    action = formatted("height off %+.0f mm, approach fails", number(pass, "miss_z") * 1e3);
+  } else if (verdict == "final_fail") {
+    action = "final check still off, approach fails";
+  }
+  last_miss_m_ = std::hypot(number(pass, "miss_x"), number(pass, "miss_y"));
+  pass_rows_.push_back(
+    {formatted(
+        "attempt %.0f pass %.0f: miss (%+.0f, %+.0f) = %.0f mm%s · %s · total (%+.0f, %+.0f) mm"
+        " (K0)", number(pass, "attempt"), number(pass, "pass"), number(pass, "miss_x") * 1e3,
+        number(pass, "miss_y") * 1e3, last_miss_m_ * 1e3, source_text(grasped_), action.c_str(),
+        number(pass, "off_x") * 1e3, number(pass, "off_y") * 1e3), grasped_ == Source::Fk});
   grasped_ = Source::Unknown;
-  approach_restart_ = false;
 }
+
+void CBSRunState::settleStatus(const std::string & line) {settle_ = parse_status(line);}
 
 void CBSRunState::loadOffStatus(const std::string & line) {load_off_ = parse_status(line);}
 
@@ -337,7 +359,10 @@ void CBSRunState::poseStatus(const std::string & line)
     return;
   }
   // The pickup's REFINE_BLOCK of the same block comes before any pass.
-  if (mode == "REFINE_BLOCK" && !passes_.empty() && value(pose, "block") == value(task_, "block")) {
+  if (
+    mode == "REFINE_BLOCK" && !pass_rows_.empty() &&
+    value(pose, "block") == value(task_, "block"))
+  {
     placed_ = pose;
   }
 }
@@ -377,21 +402,7 @@ void CBSRunState::solverHealth(int outcome, double solve_time_s)
   solver_seen_ = true;
 }
 
-void CBSRunState::swaySettled(int settled, double max_rate, const std::string & verdict)
-{
-  settled_ = settled;
-  sway_rate_ = max_rate;
-  // crane_mpc's sentence names the bound it decided on; an UNKNOWN one does not.
-  const auto at = verdict.find("dq_u_settled [");
-  double tip = 0.0;
-  double tilt = 0.0;
-  if (
-    at != std::string::npos &&
-    std::sscanf(verdict.c_str() + at, "dq_u_settled [%lf, %lf", &tip, &tilt) == 2)
-  {
-    sway_bound_ = std::max(tip, tilt);  // against the larger rate
-  }
-}
+void CBSRunState::swaySettled(int settled) {settled_ = settled;}
 
 std::string CBSRunState::run_text() const
 {
@@ -424,13 +435,18 @@ std::string CBSRunState::activity_text(double now_s) const
   }
   if (node_status_ == "RUNNING") {
     const double running_s = now_s - node_since_s_;
-    if (node_name_ == "Wait for the load to settle") {
+    if (node_name_ == "Wait for the load to settle" && !settle_.empty()) {
+      // WaitForMoveComplete's own gate: its sway_bound on the rates, or 0 and the MPC verdict.
+      const double rate = number(settle_, "rate", NAN);
+      const double bound = number(settle_, "bound");
       std::string text = "Waiting for the load to settle: sway ";
-      text += std::isnan(sway_rate_) ? "unknown" : formatted("%.3f rad/s", sway_rate_);
-      if (!std::isnan(sway_bound_)) {
-        text += formatted(" → %.3f rad/s", sway_bound_);
+      text += std::isnan(rate) ? "unknown" : formatted("%.3f rad/s", rate);
+      text += bound > 0.0 ? formatted(" → %.3f rad/s", bound) : " → MPC verdict settled";
+      if (value(settle_, "still") == "1") {
+        text += formatted(
+          ", held %.1f of %.1f s", number(settle_, "held"), number(settle_, "hold"));
       }
-      return text + formatted(" (%.0f s)", running_s);
+      return text + formatted(" (%.0f s)", number(settle_, "elapsed"));
     }
     if (is_planner(node_name_)) {
       return formatted("Planning the next move… %.0f s", running_s);
@@ -506,95 +522,9 @@ std::string CBSRunState::in_air_text() const
   if (in_air_.empty()) {
     return "In air: not measured";
   }
-  std::string text = formatted(
-    "In air: pass %.0f, (%.3f, %.3f, %.3f), tilt %.2f deg", number(in_air_, "pass"),
-    number(in_air_, "x"), number(in_air_, "y"), number(in_air_, "z"),
-    number(in_air_, "tilt_deg"));
-  // Only against the waypoint the tree itself corrects to, and in the task line's frame
-  // (`world`), not the measurement's own; without both there is no miss.
-  if (
-    task_.count("approach_x") == 0 || task_.count("approach_y") == 0 ||
-    in_air_.count("world_x") == 0 || in_air_.count("world_y") == 0)
-  {
-    return text;
-  }
-  const double miss = std::hypot(
-    number(task_, "approach_x") - number(in_air_, "world_x"),
-    number(task_, "approach_y") - number(in_air_, "world_y"));
-  return text + formatted(
-    ", miss %.1f cm %s %.1f cm gate", miss * 100.0, miss < kMissGateM ? "within" : "over",
-    kMissGateM * 100.0);
-}
-
-namespace
-{
-
-const char * source_text(CBSRunState::Source source)
-{
-  switch (source) {
-    case CBSRunState::Source::Lidar: return " · lidar";
-    case CBSRunState::Source::Fk: return " · FK fallback";
-    case CBSRunState::Source::Unknown: break;
-  }
-  return "";
-}
-
-}  // namespace
-
-std::vector<CBSRunState::PassRow> CBSRunState::pass_rows() const
-{
-  std::vector<PassRow> rows;
-  const bool waypoint = task_.count("approach_x") != 0 && task_.count("approach_y") != 0;
-  int pass = 0;
-  double off_x = 0.0;
-  double off_y = 0.0;
-  for (const auto & measured : passes_) {
-    if (measured.restart) {
-      pass = 0;
-      off_x = 0.0;
-      off_y = 0.0;
-    }
-    ++pass;
-    const bool fk = measured.source == Source::Fk;
-    const char * source = source_text(measured.source);
-    if (!waypoint || std::isnan(measured.x) || std::isnan(measured.y)) {
-      rows.push_back({formatted("pass %d: no world pose to compare%s", pass, source), fk});
-      continue;
-    }
-    // The tree's own arithmetic, in `world`: miss = waypoint - measured, off_x/off_y sum the
-    // misses. The tree works in K0_mounting_base; a rigid transform keeps every |miss| and gate.
-    const double miss_x = number(task_, "approach_x") - measured.x;
-    const double miss_y = number(task_, "approach_y") - measured.y;
-    const double miss = std::hypot(miss_x, miss_y);
-    const double miss_z = number(task_, "target_z", NAN) + kWaypointAboveM - measured.z;
-    std::string action;
-    bool ends = true;
-    if (std::abs(miss_z) >= kMissZGateM) {
-      action = formatted("height off %.0f mm, approach fails", miss_z * 1e3);
-    } else if (miss < kMissGateM) {
-      action = "within, done";
-    } else if (pass > kLoopPasses) {
-      action = "final check still off, approach fails";
-    } else {
-      off_x += miss_x;
-      off_y += miss_y;
-      action = formatted("shift (%+.0f, %+.0f) mm", miss_x * 1e3, miss_y * 1e3);
-      ends = false;
-    }
-    rows.push_back(
-      {formatted(
-          "pass %d: miss (%+.0f, %+.0f) = %.0f mm%s · %s · total (%+.0f, %+.0f) mm"
-          " (world)", pass,
-          miss_x * 1e3, miss_y * 1e3, miss * 1e3, source, action.c_str(), off_x * 1e3,
-          off_y * 1e3), fk});
-    // A retry of the approach starts the loop over, off_x/off_y back at zero.
-    if (ends) {
-      pass = 0;
-      off_x = 0.0;
-      off_y = 0.0;
-    }
-  }
-  return rows;
+  return formatted(
+    "In air: (%.3f, %.3f, %.3f) %s, tilt %.2f deg", number(in_air_, "x"), number(in_air_, "y"),
+    number(in_air_, "z"), value(in_air_, "frame", "?").c_str(), number(in_air_, "tilt_deg"));
 }
 
 std::string CBSRunState::placed_text() const
@@ -620,15 +550,10 @@ std::string CBSRunState::placed_text() const
 std::string CBSRunState::block_summary() const
 {
   std::string text = "Last block " + value(task_, "block", "?") + ":";
-  if (
-    !passes_.empty() && !std::isnan(passes_.back().x) && task_.count("approach_x") != 0 &&
-    task_.count("approach_y") != 0)
-  {
-    const auto & last = passes_.back();
+  if (!pass_rows_.empty()) {
     text += formatted(
-      " in-air miss %.0f mm after %zu pass%s,",
-      std::hypot(number(task_, "approach_x") - last.x, number(task_, "approach_y") - last.y) *
-      1e3, passes_.size(), passes_.size() == 1 ? "" : "es");
+      " in-air miss %.0f mm after %zu pass%s,", last_miss_m_ * 1e3, pass_rows_.size(),
+      pass_rows_.size() == 1 ? "" : "es");
   }
   const std::string placed = placed_text();
   const auto colon = placed.find(": ");

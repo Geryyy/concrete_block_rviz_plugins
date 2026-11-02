@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cmath>
 #include <map>
 #include <string>
 #include <vector>
@@ -95,8 +94,11 @@ public:
   // crane_msgs/SolverHealth SOLVE_* and crane_msgs/SwaySettled SETTLED_* wire values; the
   // numbering is copied rather than included, to keep this class free of message packages.
   void solverHealth(int outcome, double solve_time_s);
-  // `max_rate` the larger |velocity| [rad/s]; `verdict` the message, which names the bound.
-  void swaySettled(int settled, double max_rate = NAN, const std::string & verdict = "");
+  void swaySettled(int settled);
+  // `/cbs/status/place_pass`: one in-air pass as SubTreePlaceApproach decided it (K0).
+  void placePassStatus(const std::string & line);
+  // `/cbs/status/settle`: the sway gate WaitForMoveComplete applies.
+  void settleStatus(const std::string & line);
 
   Run run() const {return run_;}
   Phase phase() const {return phase_;}
@@ -116,7 +118,7 @@ public:
   std::string planner_text() const;
   std::string in_air_text() const;
   // This block's passes: miss, measurement source, the shift the tree applied after it.
-  std::vector<PassRow> pass_rows() const;
+  const std::vector<PassRow> & pass_rows() const {return pass_rows_;}
   // The post-release REFINE_BLOCK against the slot; empty until it ran for this block.
   std::string placed_text() const;
   std::string last_block_text() const {return last_block_;}
@@ -165,18 +167,11 @@ private:
   Status in_air_;
   Status load_off_;
 
-  // In `world`, the task line's frame; NaN without a world pose.
-  struct Pass
-  {
-    double x, y, z;
-    Source source;
-    bool restart;  // the first pass of a new approach: numbering and total start over
-  };
-  std::vector<Pass> passes_;
+  Status settle_;
+  std::vector<PassRow> pass_rows_;
+  double last_miss_m_{0.0};
   // The last REFINE_GRASPED, waiting for the measurement it fed.
   Source grasped_{Source::Unknown};
-  // A carry or lift ran since the last pass, so the next one starts a new approach.
-  bool approach_restart_{false};
   Status placed_;
   std::string last_block_;
   bool placement_measured_{false};
@@ -185,8 +180,6 @@ private:
   double placement_dx_{0.0};
   double placement_dy_{0.0};
   Source placement_source_{Source::Unknown};
-  double sway_rate_{NAN};
-  double sway_bound_{NAN};
   int solver_outcome_{0};
   double solve_time_s_{0.0};
   bool solver_seen_{false};
