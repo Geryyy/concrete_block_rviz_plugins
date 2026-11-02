@@ -574,7 +574,8 @@ std::vector<CBSRunState::PassRow> CBSRunState::pass_rows() const
     }
     rows.push_back(
       {formatted(
-          "pass %d: miss (%+.0f, %+.0f) = %.0f mm%s · %s · total (%+.0f, %+.0f) mm", pass,
+          "pass %d: miss (%+.0f, %+.0f) = %.0f mm%s · %s · total (%+.0f, %+.0f) mm"
+          " (world)", pass,
           miss_x * 1e3, miss_y * 1e3, miss * 1e3, source, action.c_str(), off_x * 1e3,
           off_y * 1e3), fk});
     // A retry of the approach starts the loop over, off_x/off_y back at zero.
@@ -647,7 +648,7 @@ std::string CBSRunState::placement_text() const
     case Light::Green: return head + ", within 1 cm: place";
     case Light::Yellow:
       return head + formatted(
-        ", over 1 cm: Correct moves hover by (%+.0f, %+.0f) mm", placement_dx_ * 1e3,
+        ", over 1 cm: Correct moves hover by (%+.0f, %+.0f) mm (K0)", placement_dx_ * 1e3,
         placement_dy_ * 1e3);
     case Light::Red: break;
   }

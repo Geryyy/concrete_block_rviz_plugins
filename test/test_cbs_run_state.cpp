@@ -271,11 +271,12 @@ TEST(CBSRunState, one_row_per_in_air_pass_with_the_shift_the_tree_applied)
   // Numbered per block, not by the node's own counter.
   EXPECT_EQ(
     rows[0].text,
-    "pass 1: miss (-24, -10) = 26 mm · lidar · shift (-24, -10) mm · total (-24, -10) mm");
+    "pass 1: miss (-24, -10) = 26 mm · lidar · shift (-24, -10) mm · total (-24, -10) mm"
+    " (world)");
   EXPECT_FALSE(rows[0].fk);
   EXPECT_EQ(
     rows[1].text,
-    "pass 2: miss (-4, -3) = 5 mm · FK fallback · within, done · total (-24, -10) mm");
+    "pass 2: miss (-4, -3) = 5 mm · FK fallback · within, done · total (-24, -10) mm (world)");
   EXPECT_TRUE(rows[1].fk);
 
   state.poseStatus(
@@ -317,7 +318,7 @@ TEST(CBSRunState, the_placement_light_agrees_with_the_auto_loops_gate)
   EXPECT_TRUE(state.correct_available());
   EXPECT_EQ(
     state.placement_text(),
-    "Residual 23 mm · lidar, over 1 cm: Correct moves hover by (+20, -11) mm");
+    "Residual 23 mm · lidar, over 1 cm: Correct moves hover by (+20, -11) mm (K0)");
 
   // After the correction the old number is stale until measured again.
   state.operatorState("waiting:measure|place");
