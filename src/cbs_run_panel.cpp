@@ -5,7 +5,9 @@
 #include <QMetaObject>
 #include <QStringList>
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
@@ -31,8 +33,16 @@ constexpr const char * kGreyLight =
   "QLabel { background-color: #808080; border: 1px solid #404040; border-radius: 9px; }";
 constexpr const char * kGreenLight =
   "QLabel { background-color: #26a269; border: 1px solid #1b6f47; border-radius: 9px; }";
+constexpr const char * kYellowLight =
+  "QLabel { background-color: #f5c211; border: 1px solid #9c7c0b; border-radius: 9px; }";
 constexpr const char * kRedLight =
   "QLabel { background-color: #e01b24; border: 1px solid #8a1016; border-radius: 9px; }";
+
+double now_s()
+{
+  return std::chrono::duration<double>(
+    std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 
 std::string environment_or(const char * name, const std::string & fallback)
 {
@@ -97,8 +107,7 @@ void CBSRunPanel::onInitialize()
         }, Qt::QueuedConnection);
     });
 
-  // Both refinement loops report the same three things; the step section shows
-  // whichever loop the latched state is in.
+  // The step section shows whichever loop the latched state is in.
   const auto subscribe_residual = [this](const char * topic, Residual * residual) {
       residual_subs_.push_back(
         node_->create_subscription<std_msgs::msg::String>(
@@ -139,15 +148,35 @@ void CBSRunPanel::onInitialize()
   subscribe_residual("pickup_refinement_status", &pickup_);
   subscribe_within("pickup_residual_within_indicator", &pickup_);
   subscribe_error("pickup_translation_error_m", &pickup_);
-  subscribe_residual("refinement_status", &placement_);
-  subscribe_within("placement_residual_within_indicator", &placement_);
-  subscribe_error("placement_translation_error_m", &placement_);
+  // Placement: the light is CBSRunState's, on the auto loop's 1 cm, not the indicator's.
+  residual_subs_.push_back(
+    node_->create_subscription<std_msgs::msg::String>(
+      "/assembly_operator/refinement_status", rclcpp::QoS(1).transient_local(),
+      [this](const std_msgs::msg::String::SharedPtr message) {
+        QMetaObject::invokeMethod(
+          this, [this, text = message->data]() {
+            placement_text_ = QString::fromStdString(text);
+            state_.placementResidual(text);
+            refresh();
+          }, Qt::QueuedConnection);
+      }));
+  residual_subs_.push_back(
+    node_->create_subscription<std_msgs::msg::Float64>(
+      "/assembly_operator/placement_translation_error_m", rclcpp::QoS(1).transient_local(),
+      [this](const std_msgs::msg::Float64::SharedPtr message) {
+        QMetaObject::invokeMethod(
+          this, [this, error_m = message->data]() {
+            state_.placementError(error_m);
+            refresh();
+          }, Qt::QueuedConnection);
+      }));
 
   // The run's own numbers, published next to the log lines that already carried them.
   subscribeStatus("/cbs/status/task", &CBSRunState::taskStatus);
   subscribeStatus("/cbs/status/plan", &CBSRunState::planStatus);
   subscribeStatus("/cbs/status/inair", &CBSRunState::inAirStatus);
   subscribeStatus("/cbs/status/load_off", &CBSRunState::loadOffStatus);
+  subscribeStatus("/cbs/status/pose", &CBSRunState::poseStatus);
   // Volatile depth 1, matching crane_mpc's publishers: these report, they do not latch.
   status_subs_.push_back(
     node_->create_subscription<crane_msgs::msg::SolverHealth>(
@@ -164,8 +193,10 @@ void CBSRunPanel::onInitialize()
       "/crane/sway_settled", rclcpp::QoS(1),
       [this](const crane_msgs::msg::SwaySettled::SharedPtr message) {
         QMetaObject::invokeMethod(
-          this, [this, settled = message->settled]() {
-            state_.swaySettled(settled);
+          this, [this, settled = message->settled,
+          rate = std::max(std::abs(message->velocity[0]), std::abs(message->velocity[1])),
+          verdict = message->message]() {
+            state_.swaySettled(settled, rate, verdict);
             refresh();
           }, Qt::QueuedConnection);
       }));
@@ -189,6 +220,10 @@ void CBSRunPanel::onInitialize()
       }
     });
   connect_timer_->start(1000);
+  // The planning and settle clocks count on without feedback.
+  auto * clock_timer = new QTimer(this);
+  connect(clock_timer, &QTimer::timeout, this, [this]() {refresh();});
+  clock_timer->start(1000);
   refresh();
 }
 
@@ -238,6 +273,9 @@ void CBSRunPanel::buildUi()
   // behind it, which is what a log or a bug report needs.
   phase_bar_label_ = new QLabel(header);
   phase_bar_label_->setWordWrap(true);
+  activity_label_ = new QLabel(header);
+  activity_label_->setWordWrap(true);
+  activity_label_->setStyleSheet("QLabel { font-weight: bold; }");
   phase_label_ = new QLabel("Phase: idle", header);
   phase_label_->setWordWrap(true);
   auto * header_buttons = new QHBoxLayout();
@@ -248,6 +286,7 @@ void CBSRunPanel::buildUi()
   header_layout->addWidget(header_label_);
   header_layout->addWidget(run_label_);
   header_layout->addWidget(phase_bar_label_);
+  header_layout->addWidget(activity_label_);
   header_layout->addWidget(phase_label_);
   header_layout->addLayout(header_buttons);
 
@@ -266,6 +305,13 @@ void CBSRunPanel::buildUi()
   planner_label_->setWordWrap(true);
   in_air_label_ = new QLabel("In air: not measured", reports);
   in_air_label_->setWordWrap(true);
+  passes_label_ = new QLabel(reports);
+  passes_label_->setTextFormat(Qt::RichText);
+  passes_label_->setWordWrap(true);
+  placed_label_ = new QLabel(reports);
+  placed_label_->setWordWrap(true);
+  last_block_label_ = new QLabel(reports);
+  last_block_label_->setWordWrap(true);
   touchdown_bar_ = new QProgressBar(reports);
   touchdown_bar_->setTextVisible(false);
   touchdown_label_ = new QLabel("Touchdown: not descending", reports);
@@ -274,8 +320,11 @@ void CBSRunPanel::buildUi()
   mpc_label_->setWordWrap(true);
   reports_layout->addWidget(planner_label_);
   reports_layout->addWidget(in_air_label_);
+  reports_layout->addWidget(passes_label_);
   reports_layout->addWidget(touchdown_bar_);
   reports_layout->addWidget(touchdown_label_);
+  reports_layout->addWidget(placed_label_);
+  reports_layout->addWidget(last_block_label_);
   reports_layout->addWidget(mpc_label_);
 
   // ── 3. setup ──────────────────────────────────────────────────────────
@@ -474,7 +523,7 @@ void CBSRunPanel::sendGoal()
         this,
         [this, node_name = feedback->last_change.node_name,
           current_status = feedback->last_change.current_status]() {
-          state_.feedback(node_name, current_status);
+          state_.feedback(node_name, current_status, now_s());
           refresh();
         }, Qt::QueuedConnection);
     };
@@ -670,6 +719,7 @@ void CBSRunPanel::refresh()
     QString("Run: %1%2").arg(QString::fromStdString(state_.run_text()))
     .arg(tree.isEmpty() ? QString() : " — " + tree));
   phase_bar_label_->setText(QString::fromStdString(state_.phase_bar()));
+  activity_label_->setText(QString::fromStdString(state_.activity_text(now_s())));
   phase_label_->setText(QString::fromStdString(state_.phase_text()));
   const QString prompt = QString::fromStdString(state_.prompt());
   prompt_banner_->setText(prompt);
@@ -679,6 +729,19 @@ void CBSRunPanel::refresh()
 
   planner_label_->setText(QString::fromStdString(state_.planner_text()));
   in_air_label_->setText(QString::fromStdString(state_.in_air_text()));
+  QStringList rows;
+  for (const auto & row : state_.pass_rows()) {
+    const QString text = QString::fromStdString(row.text).toHtmlEscaped();
+    rows << (row.fk ? "<span style=\"color:#c64600;\">" + text + "</span>" : text);
+  }
+  passes_label_->setText(rows.join("<br>"));
+  passes_label_->setVisible(!rows.isEmpty());
+  const QString placed = QString::fromStdString(state_.placed_text());
+  placed_label_->setText(placed);
+  placed_label_->setVisible(!placed.isEmpty());
+  const QString last_block = QString::fromStdString(state_.last_block_text());
+  last_block_label_->setText(last_block);
+  last_block_label_->setVisible(!last_block.isEmpty());
   touchdown_label_->setText(QString::fromStdString(state_.touchdown_text()));
   // Full bar is the release gate, not 100 % of m g r: that is the number the tree acts on.
   const int gate = static_cast<int>(state_.unload_gate() * 100.0);
@@ -710,21 +773,31 @@ void CBSRunPanel::refresh()
   measure_button_->setEnabled(!command_in_flight_);
   correct_button_->setText(correct_label(correct));
   correct_button_->setVisible(!correct.empty());
-  correct_button_->setEnabled(!command_in_flight_);
 
   // Which loop the latched state is in decides which residual is on show.
   const bool in_pickup = measure == "pickup_measure" || correct == "pickup_correct";
   const bool refining = !measure.empty() || !correct.empty();
-  const Residual & residual = in_pickup ? pickup_ : placement_;
+  correct_button_->setEnabled(
+    !command_in_flight_ && (in_pickup || state_.correct_available()));
   residual_light_->setVisible(refining);
   residual_label_->setVisible(refining);
   refinement_label_->setVisible(refining);
-  refinement_label_->setText(residual.text);
-  if (residual.measured) {
-    residual_light_->setStyleSheet(residual.within ? kGreenLight : kRedLight);
+  if (!in_pickup) {
+    refinement_label_->setText(placement_text_);
+    const auto light = state_.placement_light();
+    residual_light_->setStyleSheet(
+      light == CBSRunState::Light::Green ? kGreenLight :
+      light == CBSRunState::Light::Yellow ? kYellowLight :
+      light == CBSRunState::Light::Red ? kRedLight : kGreyLight);
+    residual_label_->setText(QString::fromStdString(state_.placement_text()));
+    return;
+  }
+  refinement_label_->setText(pickup_.text);
+  if (pickup_.measured) {
+    residual_light_->setStyleSheet(pickup_.within ? kGreenLight : kRedLight);
     residual_label_->setText(
-      QString("Residual: %1 cm%2").arg(residual.error_m * 100.0, 0, 'f', 1)
-      .arg(residual.within ? " (within)" : " (correction recommended)"));
+      QString("Residual: %1 cm%2").arg(pickup_.error_m * 100.0, 0, 'f', 1)
+      .arg(pickup_.within ? " (within)" : " (correction recommended)"));
   } else {
     residual_light_->setStyleSheet(kGreyLight);
     residual_label_->setText("Residual: not measured");

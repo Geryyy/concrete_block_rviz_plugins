@@ -20,6 +20,11 @@ namespace
 constexpr const char * kWaitingPrefix = "waiting:";
 // The gate subtree_place_block.xml's correction loop stops at (`miss^2 >= 1e-4`).
 constexpr double kMissGateM = 0.01;
+constexpr double kMissZGateM = 0.08;  // same tree, `miss_z^2 < 0.0064`
+constexpr double kWaypointAboveM = 0.30;  // dz_z = place_z + 0.30
+constexpr int kLoopPasses = 3;  // Repeat num_cycles; the pass after them is the final check
+// EvaluatePlacementResidual's max_correction_m in operator_guided_single_block.xml.
+constexpr double kMaxCorrectionM = 0.30;
 
 bool is_measure(const std::string & command)
 {
@@ -63,6 +68,72 @@ const std::array<std::pair<const char *, Phase>, 18> kPhases{{
 
 const std::array<const char *, 8> kPhaseNames{
   {"pick", "lift", "carry", "approach", "correct", "descend", "touchdown", "return"}};
+
+constexpr const char * kInAirSentence =
+  "In-air correction: lidar measures the carried block, shifts the waypoint by the miss";
+
+// Same order as Phase, Unknown dropped.
+const std::array<const char *, 8> kPhaseSentences{{
+  "Picking the block: descend, grip, check the grasp",
+  "Lifting the load clear",
+  "Moving above the next target",
+  "Descending to the waypoint 30 cm over the slot",
+  kInAirSentence,
+  "Angled entry to 5 cm over the slot",
+  "Setting the block down: released once the hook is unloaded",
+  "Fetching the next task",
+}};
+
+/// RUNNING node -> sentence; the settle wait and the planners are worded in activity_text.
+const std::array<std::pair<const char *, const char *>, 16> kNodeSentences{{
+  {"MeasureBlockFromGripper", kInAirSentence},
+  {"RunPoseEstimation", "Lidar is measuring the block"},
+  {"CaptureBlockGraspOffset", "Updating the grasp offset from the measured block"},
+  {"Capture grasp offset", "Updating the grasp offset from the gripped block"},
+  {"Capture grasp offset after vision", "Updating the grasp offset from the measured block"},
+  {"WaitForLoadOff", "Touchdown: lowering at half speed until the hook is unloaded"},
+  {"Write placed pose", "Block landed: writing its pose to the world model"},
+  {"WaitForMoveComplete", "Crane moving: MPC tracks the planned trajectory"},
+  {"FollowJointTrajectory", "Crane moving: MPC tracks the planned trajectory"},
+  {"Wait for grasp detector", "Waiting for the grasp detector to confirm the grip"},
+  {"GetNextAssemblyTask", "Fetching the next task from the plan"},
+  {"EvaluatePlacementResidual", "Comparing the carried block with the placement hover"},
+  {"EvaluatePickupResidual", "Comparing the pickup block with its planned pose"},
+  {"CheckUserApproval", "Waiting for your approval"},
+  {"GetUserApproval", "Moving while you hold the deadman"},
+  {"SetMpcPayload", "Telling the MPC what the hook carries"},
+}};
+
+/// Awaited step-by-step command -> sentence.
+const std::array<std::pair<const char *, const char *>, 9> kCommandSentences{{
+  {"acquire", "Step by step: waiting for you to fetch the next task"},
+  {"pickup_hover", "Task served: waiting for you to send the crane above the pickup block"},
+  {"pickup_measure", "Above the pickup block: check the pickup, or grasp the block"},
+  {"pickup_correct", "Pickup checked: correct the hover by it, or grasp the block"},
+  {"pick", "Waiting for you to grasp the block"},
+  {"hover", "Block gripped: waiting for you to carry it to the placement hover"},
+  {"measure", "At the placement hover: measure the residual, or place the block"},
+  {"correct", "Residual measured: correct the hover by it, or place the block"},
+  {"place", "Waiting for you to place the block"},
+}};
+
+bool is_planner(const std::string & node_name)
+{
+  return node_name == "CalcA2BMovement" || node_name == "CalcGripMovement" ||
+         node_name == "Calc approach target" || node_name.rfind("Plan ", 0) == 0;
+}
+
+template<std::size_t N>
+const char * lookup(
+  const std::array<std::pair<const char *, const char *>, N> & table, const std::string & key)
+{
+  for (const auto & entry : table) {
+    if (key == entry.first) {
+      return entry.second;
+    }
+  }
+  return nullptr;
+}
 
 Phase phase_of(const std::string & node_name)
 {
@@ -150,6 +221,10 @@ void CBSRunState::startRequested(const std::string & tree_name)
   node_status_.clear();
   approval_node_.clear();
   phase_ = Phase::Unknown;
+  passes_.clear();
+  placed_.clear();
+  grasped_ = Source::Unknown;
+  placement_measured_ = false;
 }
 
 void CBSRunState::goalAccepted(bool accepted)
@@ -157,8 +232,12 @@ void CBSRunState::goalAccepted(bool accepted)
   run_ = accepted ? Run::Running : Run::Stopped;
 }
 
-void CBSRunState::feedback(const std::string & node_name, const std::string & current_status)
+void CBSRunState::feedback(
+  const std::string & node_name, const std::string & current_status, double now_s)
 {
+  if (node_name != node_name_ || current_status != node_status_) {
+    node_since_s_ = now_s;
+  }
   node_name_ = node_name;
   node_status_ = current_status;
   if (is_approval(node_name)) {
@@ -182,6 +261,7 @@ void CBSRunState::goalFinished(bool succeeded)
 void CBSRunState::operatorState(const std::string & latched)
 {
   waiting_ = false;
+  expected_command_.clear();
   continue_command_.clear();
   measure_command_.clear();
   correct_command_.clear();
@@ -195,6 +275,9 @@ void CBSRunState::operatorState(const std::string & latched)
     if (command.empty()) {
       continue;
     }
+    if (expected_command_.empty()) {
+      expected_command_ = command;
+    }
     if (is_measure(command)) {
       if (measure_command_.empty()) {measure_command_ = command;}
     } else if (is_correct(command)) {
@@ -203,12 +286,84 @@ void CBSRunState::operatorState(const std::string & latched)
       continue_command_ = command;
     }
   }
+  // A new measurement is awaited: the last one was taken before the correction moved.
+  if (expected_command_ == "measure") {
+    placement_measured_ = false;
+  }
 }
 
-void CBSRunState::taskStatus(const std::string & line) {task_ = parse_status(line);}
+void CBSRunState::taskStatus(const std::string & line)
+{
+  const Status next = parse_status(line);
+  const auto key = [](const Status & status) {
+      return value(status, "plan") + "|" + value(status, "task") + "|" + value(status, "block");
+    };
+  // A re-served task (retry) keeps its history; a new block, or the first task line after
+  // the latched replay, starts a fresh one.
+  if (key(next) != key(task_)) {
+    if (!task_.empty() && (!passes_.empty() || !placed_.empty())) {
+      last_block_ = block_summary();
+    }
+    passes_.clear();
+    placed_.clear();
+    grasped_ = Source::Unknown;
+    placement_measured_ = false;
+  }
+  task_ = next;
+}
+
 void CBSRunState::planStatus(const std::string & line) {plan_ = parse_status(line);}
-void CBSRunState::inAirStatus(const std::string & line) {in_air_ = parse_status(line);}
+
+void CBSRunState::inAirStatus(const std::string & line)
+{
+  in_air_ = parse_status(line);
+  passes_.push_back(
+    {number(in_air_, "x"), number(in_air_, "y"), number(in_air_, "z"), grasped_});
+  grasped_ = Source::Unknown;
+}
+
 void CBSRunState::loadOffStatus(const std::string & line) {load_off_ = parse_status(line);}
+
+void CBSRunState::poseStatus(const std::string & line)
+{
+  const Status pose = parse_status(line);
+  const std::string mode = value(pose, "mode");
+  if (mode == "REFINE_GRASPED") {
+    grasped_ = value(pose, "ok") == "1" ? Source::Lidar : Source::Fk;
+    return;
+  }
+  // The pickup's REFINE_BLOCK of the same block comes before any pass.
+  if (mode == "REFINE_BLOCK" && !passes_.empty() && value(pose, "block") == value(task_, "block")) {
+    placed_ = pose;
+  }
+}
+
+void CBSRunState::placementResidual(const std::string & text)
+{
+  if (text.rfind("Placement residual failed", 0) == 0) {
+    placement_measured_ = false;
+    return;
+  }
+  const auto at = text.find("dxyz=[");
+  double dx = 0.0;
+  double dy = 0.0;
+  if (
+    at != std::string::npos &&
+    std::sscanf(text.c_str() + at, "dxyz=[%lf, %lf", &dx, &dy) == 2)
+  {
+    placement_dx_ = dx;
+    placement_dy_ = dy;
+  }
+}
+
+void CBSRunState::placementError(double error_m)
+{
+  // Paired here, the last of the residual's topics, after the REFINE_GRASPED line.
+  placement_source_ = grasped_;
+  grasped_ = Source::Unknown;
+  placement_error_m_ = error_m;
+  placement_measured_ = true;
+}
 
 void CBSRunState::solverHealth(int outcome, double solve_time_s)
 {
@@ -217,7 +372,21 @@ void CBSRunState::solverHealth(int outcome, double solve_time_s)
   solver_seen_ = true;
 }
 
-void CBSRunState::swaySettled(int settled) {settled_ = settled;}
+void CBSRunState::swaySettled(int settled, double max_rate, const std::string & verdict)
+{
+  settled_ = settled;
+  sway_rate_ = max_rate;
+  // crane_mpc's sentence names the bound it decided on; an UNKNOWN one does not.
+  const auto at = verdict.find("dq_u_settled [");
+  double tip = 0.0;
+  double tilt = 0.0;
+  if (
+    at != std::string::npos &&
+    std::sscanf(verdict.c_str() + at, "dq_u_settled [%lf, %lf", &tip, &tilt) == 2)
+  {
+    sway_bound_ = std::max(tip, tilt);  // against the larger rate
+  }
+}
 
 std::string CBSRunState::run_text() const
 {
@@ -237,6 +406,38 @@ std::string CBSRunState::phase_text() const
     return "Phase: idle";
   }
   return "Phase: " + node_name_ + ": " + node_status_;
+}
+
+std::string CBSRunState::activity_text(double now_s) const
+{
+  if (waiting_) {
+    const char * sentence = lookup(kCommandSentences, expected_command_);
+    return sentence ? std::string(sentence) : "Waiting for your command: " + expected_command_;
+  }
+  if (node_status_.empty() || node_status_ == "IDLE") {
+    return run_text();
+  }
+  if (node_status_ == "RUNNING") {
+    const double running_s = now_s - node_since_s_;
+    if (node_name_ == "Wait for the load to settle") {
+      std::string text = "Waiting for the load to settle: sway ";
+      text += std::isnan(sway_rate_) ? "unknown" : formatted("%.3f rad/s", sway_rate_);
+      if (!std::isnan(sway_bound_)) {
+        text += formatted(" → %.3f rad/s", sway_bound_);
+      }
+      return text + formatted(" (%.0f s)", running_s);
+    }
+    if (is_planner(node_name_)) {
+      return formatted("Planning the next move… %.0f s", running_s);
+    }
+    if (const char * sentence = lookup(kNodeSentences, node_name_)) {
+      return sentence;
+    }
+  }
+  if (phase_ != Phase::Unknown) {
+    return kPhaseSentences[static_cast<std::size_t>(phase_) - 1];
+  }
+  return node_name_;
 }
 
 std::string CBSRunState::phase_bar() const
@@ -314,6 +515,138 @@ std::string CBSRunState::in_air_text() const
   return text + formatted(
     ", miss %.1f cm %s %.1f cm gate", miss * 100.0, miss < kMissGateM ? "within" : "over",
     kMissGateM * 100.0);
+}
+
+namespace
+{
+
+const char * source_text(CBSRunState::Source source)
+{
+  switch (source) {
+    case CBSRunState::Source::Lidar: return " · lidar";
+    case CBSRunState::Source::Fk: return " · FK fallback";
+    case CBSRunState::Source::Unknown: break;
+  }
+  return "";
+}
+
+}  // namespace
+
+std::vector<CBSRunState::PassRow> CBSRunState::pass_rows() const
+{
+  std::vector<PassRow> rows;
+  const bool waypoint = task_.count("approach_x") != 0 && task_.count("approach_y") != 0;
+  int pass = 0;
+  double off_x = 0.0;
+  double off_y = 0.0;
+  for (const auto & measured : passes_) {
+    ++pass;
+    const bool fk = measured.source == Source::Fk;
+    const char * source = source_text(measured.source);
+    if (!waypoint) {
+      rows.push_back(
+        {formatted("pass %d: block at (%.3f, %.3f)%s", pass, measured.x, measured.y, source),
+          fk});
+      continue;
+    }
+    // The tree's own arithmetic: miss = waypoint - measured, and off_x/off_y sum the misses.
+    const double miss_x = number(task_, "approach_x") - measured.x;
+    const double miss_y = number(task_, "approach_y") - measured.y;
+    const double miss = std::hypot(miss_x, miss_y);
+    const double miss_z = number(task_, "target_z", NAN) + kWaypointAboveM - measured.z;
+    std::string action;
+    bool ends = true;
+    if (std::abs(miss_z) >= kMissZGateM) {
+      action = formatted("height off %.0f mm, approach fails", miss_z * 1e3);
+    } else if (miss < kMissGateM) {
+      action = "within, done";
+    } else if (pass > kLoopPasses) {
+      action = "final check still off, approach fails";
+    } else {
+      off_x += miss_x;
+      off_y += miss_y;
+      action = formatted("shift (%+.0f, %+.0f) mm", miss_x * 1e3, miss_y * 1e3);
+      ends = false;
+    }
+    rows.push_back(
+      {formatted(
+          "pass %d: miss (%+.0f, %+.0f) = %.0f mm%s · %s · total (%+.0f, %+.0f) mm", pass,
+          miss_x * 1e3, miss_y * 1e3, miss * 1e3, source, action.c_str(), off_x * 1e3,
+          off_y * 1e3), fk});
+    // A retry of the approach starts the loop over, off_x/off_y back at zero.
+    if (ends) {
+      pass = 0;
+      off_x = 0.0;
+      off_y = 0.0;
+    }
+  }
+  return rows;
+}
+
+std::string CBSRunState::placed_text() const
+{
+  if (placed_.empty()) {
+    return {};
+  }
+  const std::string block = value(placed_, "block", "?");
+  if (value(placed_, "ok") != "1" || placed_.count("x") == 0) {
+    return "Placed " + block + ": not re-measured, the lidar did not find it";
+  }
+  if (task_.count("target_x") == 0 || task_.count("target_y") == 0) {
+    return formatted(
+      "Placed %s: at (%.3f, %.3f)", block.c_str(), number(placed_, "x"), number(placed_, "y"));
+  }
+  const double dx = number(placed_, "x") - number(task_, "target_x");
+  const double dy = number(placed_, "y") - number(task_, "target_y");
+  return formatted(
+    "Placed %s: %.0f mm off slot (%+.0f, %+.0f)", block.c_str(), std::hypot(dx, dy) * 1e3,
+    dx * 1e3, dy * 1e3);
+}
+
+std::string CBSRunState::block_summary() const
+{
+  std::string text = "Last block " + value(task_, "block", "?") + ":";
+  if (!passes_.empty() && task_.count("approach_x") != 0 && task_.count("approach_y") != 0) {
+    const auto & last = passes_.back();
+    text += formatted(
+      " in-air miss %.0f mm after %zu pass%s,",
+      std::hypot(number(task_, "approach_x") - last.x, number(task_, "approach_y") - last.y) *
+      1e3, passes_.size(), passes_.size() == 1 ? "" : "es");
+  }
+  const std::string placed = placed_text();
+  const auto colon = placed.find(": ");
+  return text + " placed " +
+         (colon == std::string::npos ? std::string("not re-measured") : placed.substr(colon + 2));
+}
+
+CBSRunState::Light CBSRunState::placement_light() const
+{
+  if (!placement_measured_) {
+    return Light::Grey;
+  }
+  if (placement_source_ == Source::Fk || placement_error_m_ > kMaxCorrectionM) {
+    return Light::Red;
+  }
+  return placement_error_m_ < kMissGateM ? Light::Green : Light::Yellow;
+}
+
+std::string CBSRunState::placement_text() const
+{
+  const std::string head = formatted(
+    "Residual %.0f mm%s", placement_error_m_ * 1e3,
+    source_text(placement_source_));
+  switch (placement_light()) {
+    case Light::Grey: return "Residual: not measured";
+    case Light::Green: return head + ", within 1 cm: place";
+    case Light::Yellow:
+      return head + formatted(
+        ", over 1 cm: Correct moves hover by (%+.0f, %+.0f) mm", placement_dx_ * 1e3,
+        placement_dy_ * 1e3);
+    case Light::Red: break;
+  }
+  return placement_source_ == Source::Fk ?
+         head + ": the lidar did not see the block, measure again" :
+         head + ": beyond the 30 cm correction limit, check the measurement";
 }
 
 double CBSRunState::unload_fraction() const {return number(load_off_, "unload");}

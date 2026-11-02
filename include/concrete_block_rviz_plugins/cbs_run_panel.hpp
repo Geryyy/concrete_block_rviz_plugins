@@ -59,7 +59,7 @@ private:
   using RunPoseEstimation = concrete_block_world_model_interfaces::srv::RunPoseEstimation;
   using ClearWorldModel = concrete_block_world_model_interfaces::srv::ClearWorldModel;
 
-  // Pickup and placement refinement report the same three things on their own topics.
+  // What the pickup refinement reports, on three topics.
   struct Residual
   {
     bool measured{false};
@@ -101,11 +101,15 @@ private:
   QLabel * run_label_{nullptr};
   QLabel * phase_label_{nullptr};
   QLabel * phase_bar_label_{nullptr};
+  QLabel * activity_label_{nullptr};
   QPushButton * stop_button_{nullptr};
   QPushButton * retry_button_{nullptr};
   QLabel * prompt_banner_{nullptr};
   QLabel * planner_label_{nullptr};
   QLabel * in_air_label_{nullptr};
+  QLabel * passes_label_{nullptr};
+  QLabel * placed_label_{nullptr};
+  QLabel * last_block_label_{nullptr};
   QProgressBar * touchdown_bar_{nullptr};
   QLabel * touchdown_label_{nullptr};
   QLabel * mpc_label_{nullptr};
@@ -133,7 +137,7 @@ private:
   std::vector<std::pair<QRadioButton *, QString>> tree_radios_;
   CBSRunState state_;
   Residual pickup_;
-  Residual placement_;
+  QString placement_text_;
   std::string active_tree_path_;
   QString last_state_text_;
   bool command_in_flight_{false};

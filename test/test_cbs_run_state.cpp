@@ -244,3 +244,130 @@ TEST(CBSRunState, the_mpc_row_says_unknown_until_the_node_is_driving)
   state.swaySettled(1);
   EXPECT_EQ(state.mpc_text(), "MPC: over budget in 63 ms · sway swinging");
 }
+
+TEST(CBSRunState, one_row_per_in_air_pass_with_the_shift_the_tree_applied)
+{
+  CBSRunState state;
+  state.taskStatus(
+    "plan=wall1 task=3/7 block=block_2 target_x=6.000 target_y=2.000 target_z=1.050 "
+    "approach_x=6.174 approach_y=2.000");
+  state.poseStatus("mode=REFINE_GRASPED block=block_2 ok=1");
+  state.inAirStatus("pass=7 x=6.150 y=2.010 z=1.350");
+  // ForceSuccess hid this failure from the tree; the row must not.
+  state.poseStatus("mode=REFINE_GRASPED block=block_2 ok=0");
+  state.inAirStatus("pass=8 x=6.170 y=2.003 z=1.350");
+
+  const auto rows = state.pass_rows();
+  ASSERT_EQ(rows.size(), 2u);
+  // Numbered per block, not by the node's own counter.
+  EXPECT_EQ(
+    rows[0].text,
+    "pass 1: miss (+24, -10) = 26 mm · lidar · shift (+24, -10) mm · total (+24, -10) mm");
+  EXPECT_FALSE(rows[0].fk);
+  EXPECT_EQ(
+    rows[1].text,
+    "pass 2: miss (+4, -3) = 5 mm · FK fallback · within, done · total (+24, -10) mm");
+  EXPECT_TRUE(rows[1].fk);
+
+  state.poseStatus("mode=REFINE_BLOCK block=block_2 ok=1 frame=world x=6.010 y=1.995 z=1.05");
+  EXPECT_EQ(state.placed_text(), "Placed block_2: 11 mm off slot (+10, -5)");
+
+  // The next block starts empty and the last one is summed up.
+  state.taskStatus("plan=wall1 task=4/7 block=block_3 approach_x=7.0 approach_y=2.0");
+  EXPECT_TRUE(state.pass_rows().empty());
+  EXPECT_TRUE(state.placed_text().empty());
+  EXPECT_EQ(
+    state.last_block_text(),
+    "Last block block_2: in-air miss 5 mm after 2 passes, placed 11 mm off slot (+10, -5)");
+}
+
+TEST(CBSRunState, the_pickup_refine_of_the_same_block_is_not_its_placed_result)
+{
+  CBSRunState state;
+  state.taskStatus("plan=wall1 task=3/7 block=block_2 target_x=6.0 target_y=2.0");
+  state.poseStatus("mode=REFINE_BLOCK block=block_2 ok=1 frame=world x=4.1 y=-1.5 z=0.3");
+  EXPECT_TRUE(state.placed_text().empty());
+}
+
+TEST(CBSRunState, the_placement_light_agrees_with_the_auto_loops_gate)
+{
+  using Light = CBSRunState::Light;
+  CBSRunState state;
+  state.operatorState("waiting:measure|place");
+  EXPECT_EQ(state.placement_light(), Light::Grey);
+  EXPECT_FALSE(state.correct_available());
+
+  // 2.3 cm: the old 4 cm tolerance read this as within; the auto loop would move.
+  state.poseStatus("mode=REFINE_GRASPED block=block_2 ok=1");
+  state.placementResidual(
+    "Placement residual (FK XY+yaw, block_2): dxyz=[0.020, -0.011, 0.000] m, |d|=0.023 m, "
+    "dyaw=0.1 deg; correction recommended");
+  state.placementError(0.023);
+  EXPECT_EQ(state.placement_light(), Light::Yellow);
+  EXPECT_TRUE(state.correct_available());
+  EXPECT_EQ(
+    state.placement_text(),
+    "Residual 23 mm · lidar, over 1 cm: Correct moves hover by (+20, -11) mm");
+
+  // After the correction the old number is stale until measured again.
+  state.operatorState("waiting:measure|place");
+  EXPECT_EQ(state.placement_light(), Light::Grey);
+
+  state.poseStatus("mode=REFINE_GRASPED block=block_2 ok=1");
+  state.placementResidual("dxyz=[0.004, 0.002, 0.000] m");
+  state.placementError(0.0045);
+  EXPECT_EQ(state.placement_light(), Light::Green);
+  EXPECT_FALSE(state.correct_available());
+
+  // The lidar missed: the number is FK's, and Correct would move on it.
+  state.poseStatus("mode=REFINE_GRASPED block=block_2 ok=0");
+  state.placementResidual("dxyz=[0.020, -0.011, 0.000] m");
+  state.placementError(0.023);
+  EXPECT_EQ(state.placement_light(), Light::Red);
+  EXPECT_FALSE(state.correct_available());
+
+  // Beyond what EvaluatePlacementResidual would apply unclamped.
+  state.poseStatus("mode=REFINE_GRASPED block=block_2 ok=1");
+  state.placementResidual("dxyz=[0.400, 0.000, 0.000] m");
+  state.placementError(0.40);
+  EXPECT_EQ(state.placement_light(), Light::Red);
+}
+
+TEST(CBSRunState, the_activity_line_says_why_the_crane_is_not_moving)
+{
+  CBSRunState state;
+  state.startRequested("wall_assembly.xml");
+  state.goalAccepted(true);
+
+  state.feedback("Plan approach", "RUNNING", 100.0);
+  EXPECT_EQ(state.activity_text(104.2), "Planning the next move… 4 s");
+
+  state.swaySettled(
+    1, 0.031,
+    "the measured sway rate [0.031, 0.012] rad/s is outside dq_u_settled [0.02, 0.02] on the "
+    "passive pair, measured 0.010 s ago");
+  state.feedback("Wait for the load to settle", "RUNNING", 110.0);
+  EXPECT_EQ(
+    state.activity_text(122.0),
+    "Waiting for the load to settle: sway 0.031 rad/s → 0.020 rad/s (12 s)");
+
+  state.feedback("MeasureBlockFromGripper", "RUNNING", 130.0);
+  EXPECT_EQ(
+    state.activity_text(130.0),
+    "In-air correction: lidar measures the carried block, shifts the waypoint by the miss");
+
+  // A node with no sentence reads as the leg it is in.
+  state.feedback("SetBlackboard", "SUCCESS", 131.0);
+  EXPECT_EQ(
+    state.activity_text(131.0),
+    "In-air correction: lidar measures the carried block, shifts the waypoint by the miss");
+
+  // No leg either: the node name.
+  CBSRunState fresh;
+  fresh.feedback("SomethingNew", "RUNNING");
+  EXPECT_EQ(fresh.activity_text(), "SomethingNew");
+
+  fresh.operatorState("waiting:correct|place");
+  EXPECT_EQ(
+    fresh.activity_text(), "Residual measured: correct the hover by it, or place the block");
+}
