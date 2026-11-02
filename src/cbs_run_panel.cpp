@@ -175,7 +175,8 @@ void CBSRunPanel::onInitialize()
   subscribeStatus("/cbs/status/inair", &CBSRunState::inAirStatus);
   subscribeStatus("/cbs/status/load_off", &CBSRunState::loadOffStatus);
   subscribeStatus("/cbs/status/pose", &CBSRunState::poseStatus, rclcpp::QoS(10));
-  subscribeStatus("/cbs/status/place_pass", &CBSRunState::placePassStatus);
+  subscribeStatus(
+    "/cbs/status/place_pass", &CBSRunState::placePassStatus, rclcpp::QoS(10));
   subscribeStatus("/cbs/status/settle", &CBSRunState::settleStatus);
   // Volatile depth 1, matching crane_mpc's publishers: these report, they do not latch.
   status_subs_.push_back(
