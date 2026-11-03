@@ -146,7 +146,7 @@ void CBSRunPanel::onInitialize()
   subscribe_residual("pickup_refinement_status", &pickup_);
   subscribe_within("pickup_residual_within_indicator", &pickup_);
   subscribe_error("pickup_translation_error_m", &pickup_);
-  // Placement: the light is CBSRunState's, on the auto loop's 1 cm, not the indicator's.
+  // Placement: the light is CBSRunState's, on the auto loop's 5 cm, not the indicator's.
   residual_subs_.push_back(
     node_->create_subscription<std_msgs::msg::String>(
       "/assembly_operator/refinement_status", rclcpp::QoS(1).transient_local(),

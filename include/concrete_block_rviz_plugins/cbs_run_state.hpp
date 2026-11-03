@@ -48,7 +48,7 @@ public:
     Return
   };
 
-  // Residual light: not measured, within the 1 cm gate, correctable, no usable residual.
+  // Residual light: not measured, within the 5 cm gate, correctable, no usable residual.
   enum class Light
   {
     Grey,

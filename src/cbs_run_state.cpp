@@ -18,8 +18,8 @@ namespace
 {
 
 constexpr const char * kWaitingPrefix = "waiting:";
-// The gate subtree_place_block.xml's correction loop stops at (`miss^2 >= 1e-4`).
-constexpr double kMissGateM = 0.01;
+// The gate subtree_place_block.xml's correction loop stops at (`miss^2 >= 2.5e-3`).
+constexpr double kMissGateM = 0.05;
 // EvaluatePlacementResidual's max_correction_m in operator_guided_single_block.xml.
 constexpr double kMaxCorrectionM = 0.30;
 
@@ -584,7 +584,7 @@ std::string CBSRunState::placement_text() const
     source_text(placement_source_));
   switch (placement_light()) {
     case Light::Grey: return "Residual: not measured";
-    case Light::Green: return head + ", within 1 cm (yaw not checked): place";
+    case Light::Green: return head + ", within 5 cm (yaw not checked): place";
     case Light::Red: return "Residual: the measurement failed, nothing to correct";
     case Light::Yellow: break;
   }
@@ -592,7 +592,7 @@ std::string CBSRunState::placement_text() const
   const double d = std::hypot(placement_dx_, placement_dy_);
   const double scale = d > kMaxCorrectionM ? kMaxCorrectionM / d : 1.0;
   return head + formatted(
-    ", over 1 cm: Correct moves hover by (%+.0f, %+.0f) mm (K0)%s",
+    ", over 5 cm: Correct moves hover by (%+.0f, %+.0f) mm (K0)%s",
     placement_dx_ * scale * 1e3, placement_dy_ * scale * 1e3,
     scale < 1.0 ? ", clamped to 30 cm" : "");
 }

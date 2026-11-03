@@ -303,25 +303,25 @@ TEST(CBSRunState, the_placement_light_agrees_with_the_auto_loops_gate)
   EXPECT_EQ(state.placement_light(), Light::Grey);
   EXPECT_FALSE(state.correct_available());
 
-  // 2.3 cm: the old 4 cm tolerance read this as within; the auto loop would move.
-  measure(true, "0.020, -0.011, 0.000", 0.023);
+  // 6.3 cm: over the 5 cm gate, the auto loop would move.
+  measure(true, "0.060, -0.019, 0.000", 0.063);
   EXPECT_EQ(state.placement_light(), Light::Yellow);
   EXPECT_TRUE(state.correct_available());
   EXPECT_EQ(
     state.placement_text(),
-    "Residual 23 mm · lidar, over 1 cm: Correct moves hover by (+20, -11) mm (K0)");
+    "Residual 63 mm · lidar, over 5 cm: Correct moves hover by (+60, -19) mm (K0)");
 
   // Late join after a correction: the latched residual predates it.
   state.operatorState("waiting:measure|place");
   EXPECT_EQ(state.placement_light(), Light::Grey);
 
-  // The tree's <=: exactly 1 cm is within.
-  measure(true, "0.010, 0.000, 0.000", 0.010);
+  // The tree's <=: exactly 5 cm is within.
+  measure(true, "0.050, 0.000, 0.000", 0.050);
   EXPECT_EQ(state.placement_light(), Light::Green);
   EXPECT_FALSE(state.correct_available());
 
   // The lidar missed: the FK residual is still a valid correction, only tagged.
-  measure(false, "0.020, -0.011, 0.000", 0.023);
+  measure(false, "0.060, -0.019, 0.000", 0.063);
   EXPECT_EQ(state.placement_light(), Light::Yellow);
   EXPECT_TRUE(state.correct_available());
   EXPECT_NE(state.placement_text().find("· FK fallback"), std::string::npos);
